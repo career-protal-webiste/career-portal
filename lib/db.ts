@@ -42,3 +42,16 @@ export async function upsertJob(job: any) {
       ${job.source}, ${job.source_id}, ${job.fingerprint}, ${job.company}, ${job.title},
       ${job.location}, ${job.remote}, ${job.employment_type}, ${job.experience_hint},
       ${job.category}, ${job.url}, ${job.posted_at}, ${job.scraped_at ?? new Date()},
+      ${job.description}, ${job.salary_min ?? null}, ${job.salary_max ?? null},
+      ${job.currency ?? null}, ${job.visa_tags ?? null}
+    )
+    ON CONFLICT (fingerprint) DO NOTHING;
+  `;
+}
+
+// Fetch jobs for homepage
+export async function getJobs(limit: number = 50) {
+  await createJobsTable();
+  const { rows } = await sql`SELECT * FROM jobs ORDER BY posted_at DESC LIMIT ${limit}`;
+  return rows;
+}
