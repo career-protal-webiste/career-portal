@@ -40,9 +40,10 @@ export async function upsertJob(job: any) {
     )
     VALUES (
       ${job.source}, ${job.source_id}, ${job.fingerprint}, ${job.company}, ${job.title},
-      ${job.location}, ${job.remote}, ${job.employment_type}, ${job.experience_hint},
-      ${job.category}, ${job.url}, ${job.posted_at}, ${job.scraped_at ?? new Date()},
-      ${job.description}, ${job.salary_min ?? null}, ${job.salary_max ?? null},
+      ${job.location ?? null}, ${job.remote ?? null}, ${job.employment_type ?? null},
+      ${job.experience_hint ?? null}, ${job.category ?? null}, ${job.url},
+      ${job.posted_at}, ${job.scraped_at ?? new Date()},
+      ${job.description ?? null}, ${job.salary_min ?? null}, ${job.salary_max ?? null},
       ${job.currency ?? null}, ${job.visa_tags ?? null}
     )
     ON CONFLICT (fingerprint) DO NOTHING;
