@@ -1,7 +1,6 @@
 // lib/db.ts
 import { sql } from '@vercel/postgres';
 
-/** Shape we insert/upsert into the jobs table */
 export type JobRecord = {
   fingerprint: string;
   source: 'lever' | 'greenhouse' | string;
@@ -18,19 +17,26 @@ export type JobRecord = {
 
   url: string;
 
-  posted_at?: string | Date | null;   // we will normalize to ISO string
-  scraped_at?: string | Date | null;  // we will normalize to ISO string
+  posted_at?: string | Date | null;
+  scraped_at?: string | Date | null;
 
   description?: string | null;
   salary_min?: number | null;
   salary_max?: number | null;
   currency?: string | null;
-  visa_tags?: string[] | null;        // stored as text[] in PG
+  visa_tags?: string[] | null; // stored as text[] in PG
 };
 
-/** Create the jobs table and indexes (idempotent). Run once via /api/migrate */
+/** Turn ["h1","h1b"] into a Postgres array literal: {"h1","h1b"} */
+function toPgTextArrayLiteral(values?: string[] | null): string | null {
+  if (!values || values.length === 0) return null;
+  // escape embedded quotes
+  const items = values.map(v => `"${String(v).replace(/"/g, '\\"')}"`);
+  return `{${items.join(',')}}`; // e.g. {"a","b"}
+}
+
+/** Create table + indexes. Each statement is a separate call (required). */
 export async function migrate() {
-  // 1) table
   await sql`
     CREATE TABLE IF NOT EXISTS jobs (
       fingerprint     text PRIMARY KEY,
@@ -54,27 +60,19 @@ export async function migrate() {
     );
   `;
 
-  // 2) helpful indexes (each statement must be called separately)
   await sql`CREATE INDEX IF NOT EXISTS idx_jobs_company   ON jobs (company);`;
   await sql`CREATE INDEX IF NOT EXISTS idx_jobs_posted_at ON jobs (posted_at DESC NULLS LAST);`;
   await sql`CREATE INDEX IF NOT EXISTS idx_jobs_source    ON jobs (source, source_id);`;
 }
 
-/** Insert or update a job row by fingerprint (idempotent). */
+/** Insert / update by fingerprint */
 export async function upsertJob(rec: JobRecord) {
-  // Normalize dates to ISO strings so PG can cast to timestamptz
-  const posted =
-    rec.posted_at ? new Date(rec.posted_at as any).toISOString() : null;
-  const scraped =
-    rec.scraped_at
-      ? new Date(rec.scraped_at as any).toISOString()
-      : new Date().toISOString();
+  const posted  = rec.posted_at  ? new Date(rec.posted_at as any).toISOString()  : null;
+  const scraped = rec.scraped_at ? new Date(rec.scraped_at as any).toISOString() : new Date().toISOString();
+  const desc    = rec.description ?? null;
 
-  // Turn visa_tags into a Postgres array (or null)
-  const visaArray =
-    rec.visa_tags && rec.visa_tags.length > 0 ? sql.array(rec.visa_tags) : null;
-
-  const desc = rec.description ?? null;
+  // Build a *string* literal (Primitive) and cast to text[] in SQL.
+  const visaLiteral = toPgTextArrayLiteral(rec.visa_tags);
 
   await sql`
     INSERT INTO jobs (
@@ -87,7 +85,8 @@ export async function upsertJob(rec: JobRecord) {
       ${rec.fingerprint}, ${rec.source}, ${rec.source_id ?? null},
       ${rec.company}, ${rec.title}, ${rec.location ?? null}, ${rec.remote ?? null}, ${rec.employment_type ?? null},
       ${rec.experience_hint ?? null}, ${rec.category ?? null}, ${rec.url}, ${posted}, ${scraped},
-      ${desc}, ${rec.salary_min ?? null}, ${rec.salary_max ?? null}, ${rec.currency ?? null}, ${visaArray}
+      ${desc}, ${rec.salary_min ?? null}, ${rec.salary_max ?? null}, ${rec.currency ?? null},
+      ${visaLiteral}::text[]
     )
     ON CONFLICT (fingerprint) DO UPDATE SET
       source          = EXCLUDED.source,
