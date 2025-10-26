@@ -22,8 +22,13 @@ export type JobRow = {
   visa_tags: string[] | null;
 };
 
+// Convert Date | string | null → ISO string | null
+function toISO(v: unknown) {
+  if (v == null) return null;
+  const d = typeof v === 'string' ? new Date(v) : (v as Date);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
 function normalizeDates<T extends { posted_at: any; scraped_at: any }>(r: T) {
-  const toISO = (v: any) => (v == null ? null : new Date(v as any).toISOString());
   return { ...r, posted_at: toISO(r.posted_at), scraped_at: toISO(r.scraped_at) } as any;
 }
 
@@ -53,12 +58,13 @@ export async function getJobById(id: string): Promise<JobRow | null> {
   return rows[0] ? normalizeDates(rows[0]) : null;
 }
 
-// --- alias used by pages/jobs/[fingerprint].tsx ---
+// Alias for your detail page imports
 export async function getJobByFingerprint(fingerprint: string) {
   return getJobById(fingerprint);
 }
 
 export async function listSimilar(job: JobRow, limit = 6): Promise<JobRow[]> {
+  // Prefer same company
   if (job.company) {
     const r1 = await sql<JobRow>`
       SELECT
@@ -72,7 +78,7 @@ export async function listSimilar(job: JobRow, limit = 6): Promise<JobRow[]> {
     `;
     if (r1.rows.length) return r1.rows.map(normalizeDates);
   }
-
+  // Then same category
   if (job.category) {
     const r2 = await sql<JobRow>`
       SELECT
@@ -86,7 +92,7 @@ export async function listSimilar(job: JobRow, limit = 6): Promise<JobRow[]> {
     `;
     if (r2.rows.length) return r2.rows.map(normalizeDates);
   }
-
+  // Fallback: latest others
   const r3 = await sql<JobRow>`
     SELECT
       fingerprint, source, source_id, company, title, location, remote,
