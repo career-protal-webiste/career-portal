@@ -1,75 +1,55 @@
 // pages/index.tsx
-import Head from 'next/head';
 import type { GetServerSideProps } from 'next';
-import { getLatestJobs, JobRecord } from '../lib/db';
+import Link from 'next/link';
+import { listJobs, JobRow } from '../lib/db';
 
-type Props = { jobs: JobRecord[]; error?: string | null };
+type Props = { jobs: JobRow[]; error?: string };
 
 export const getServerSideProps: GetServerSideProps<Props> = async () => {
   try {
-    const jobs = await getLatestJobs(50);
+    const jobs = await listJobs(50);
     return { props: { jobs } };
   } catch (e: any) {
-    console.error('Home SSR error:', e);
-    return { props: { jobs: [], error: e?.message || 'Unknown error' } };
+    // Do not 500 the page; show a friendly message
+    return { props: { jobs: [], error: String(e?.message ?? e) } };
   }
 };
 
 export default function Home({ jobs, error }: Props) {
   return (
-    <>
-      <Head>
-        <title>Careers Portal</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-      </Head>
+    <main style={{ maxWidth: 840, margin: '40px auto', padding: '0 16px', fontFamily: 'ui-sans-serif, system-ui' }}>
+      <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>Careers Portal</h1>
+      <p style={{ color: '#666', marginBottom: 24 }}>
+        Fresh postings automatically pulled from Lever & Greenhouse.
+      </p>
 
-      <main style={{ maxWidth: 960, margin: '40px auto', padding: '0 16px' }}>
-        <h1>Careers Portal</h1>
+      {error && (
+        <p style={{ background: '#fff3cd', border: '1px solid #ffeeba', padding: 12, borderRadius: 8 }}>
+          Setup note: {error}. If this is a new deploy, visit <code>/api/migrate</code> once, then try the cron routes.
+        </p>
+      )}
 
-        {error && (
-          <p style={{ color: 'crimson' }}>
-            Error loading jobs: {error}
-          </p>
-        )}
-
-        {!error && jobs.length === 0 && (
-          <p>No jobs yet. Run the cron endpoints to fetch postings.</p>
-        )}
-
-        <ul style={{ listStyle: 'none', padding: 0 }}>
+      {!jobs.length ? (
+        <p>No jobs yet. Try running <code>/api/cron/lever?all=1</code> and <code>/api/cron/greenhouse?all=1</code>.</p>
+      ) : (
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {jobs.map((j) => (
-            <li
-              key={j.fingerprint}
-              style={{
-                border: '1px solid #e5e7eb',
-                borderRadius: 12,
-                padding: 16,
-                marginBottom: 12,
-              }}
-            >
-              <a href={j.url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
-                <h3 style={{ margin: '0 0 6px' }}>
-                  {j.title} — {j.company}
-                </h3>
-              </a>
-              <div style={{ color: '#6b7280' }}>
-                {j.location ?? 'Location n/a'} {j.remote ? '· Remote' : ''}
+            <li key={j.id} style={{ border: '1px solid #eee', borderRadius: 12, padding: 16, marginBottom: 12 }}>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>
+                {j.title}{' '}
+                <span style={{ color: '#888', fontWeight: 400 }}>— {j.company}</span>
               </div>
-              {j.posted_at && (
-                <div style={{ color: '#6b7280', fontSize: 14, marginTop: 6 }}>
-                  Posted: {new Date(j.posted_at).toLocaleDateString()}
-                </div>
-              )}
-              {j.description && (
-                <p style={{ marginTop: 8 }}>
-                  {j.description.slice(0, 240)}
-                  {j.description.length > 240 ? '…' : ''}
-                </p>
-              )}
+              <div style={{ color: '#666', fontSize: 14, marginTop: 6 }}>
+                {j.location || '—'} {j.remote ? '(Remote)' : ''}
+                {j.category ? ` • ${j.category}` : ''}
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <Link href={j.url} style={{ color: '#2563eb' }} target="_blank">View posting →</Link>
+              </div>
             </li>
           ))}
         </ul>
-      </main>
-    </>
+      )}
+    </main>
   );
 }
