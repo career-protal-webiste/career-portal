@@ -7,8 +7,13 @@ import {
   normalize,
 } from '../../../lib/jobs';
 
-// Add or remove companies as needed.
-const COMPANIES = ['databricks', 'snowflake', 'notion', 'hubspot'];
+// Use the subdomain of the Greenhouse board (boards.greenhouse.io/<token>)
+const BOARDS: { company: string; token: string }[] = [
+  { company: 'Stripe',     token: 'stripe' },
+  { company: 'Databricks', token: 'databricks' },
+  { company: 'Snowflake',  token: 'snowflake' },
+  // Add more boards here
+];
 
 export default async function handler(
   _req: NextApiRequest,
@@ -16,56 +21,55 @@ export default async function handler(
 ) {
   let inserted = 0;
 
-  for (const company of COMPANIES) {
+  for (const board of BOARDS) {
     try {
       const response = await fetch(
-        `https://api.lever.co/v0/postings/${company}?mode=json`
+        `https://boards-api.greenhouse.io/v1/boards/${board.token}/jobs`
       );
       if (!response.ok) continue;
 
-      const postings = (await response.json()) as any[];
-      for (const posting of postings) {
-        const title = posting.text || posting.title || '';
-        const description = posting.descriptionPlain || '';
-        // Check if this is a role we care about
+      const data = (await response.json()) as { jobs: any[] };
+      for (const job of data.jobs) {
+        const title: string = job.title || '';
+        const description: string = job.content || '';
+
+        // Check if this job matches one of our role patterns
         if (!roleMatches(title, description)) continue;
 
-        // Use company+title+location+url for deduplication
+        // New fingerprint uses company+title+location+url
         const fingerprint = createFingerprint(
-          posting.categories?.team || posting.company || company,
+          board.company,
           title,
-          posting.categories?.location,
-          posting.hostedUrl
+          job.location?.name,
+          job.absolute_url
         );
 
-        const job = {
-          source: 'lever',
-          source_id: String(posting.id),
+        const record = {
+          source: 'greenhouse',
+          source_id: String(job.id),
           fingerprint,
-          company: posting.categories?.team || posting.company || company,
+          company: board.company,
           title,
-          location: posting.categories?.location ?? null,
-          remote:
-            /remote/i.test(posting.categories?.location || '') ||
-            posting.workplaceType === 'remote',
-          employment_type: posting.categories?.commitment ?? null,
+          location: job.location?.name ?? null,
+          remote: /remote/i.test(job.location?.name || ''),
+          employment_type: null,
           experience_hint: inferExperience(title, description),
           category: normalize(title).category,
-          url: posting.hostedUrl,
-          posted_at: new Date(posting.createdAt),
+          url: job.absolute_url,
+          posted_at: new Date(job.updated_at || job.created_at || Date.now()),
           scraped_at: new Date(),
           description: description?.slice(0, 1200) || null,
-          salary_min: posting.salaryRange?.min ?? null,
-          salary_max: posting.salaryRange?.max ?? null,
-          currency: posting.salaryRange?.currency ?? null,
-          visa_tags: posting.tags?.filter((t: string) => /visa/i.test(t)) ?? null,
+          salary_min: null,
+          salary_max: null,
+          currency: null,
+          visa_tags: null,
         };
 
-        await upsertJob(job);
+        await upsertJob(record);
         inserted += 1;
       }
     } catch (error) {
-      console.error(`Failed to fetch Lever postings for ${company}:`, error);
+      console.error(`Failed to fetch Greenhouse board ${board.token}:`, error);
     }
   }
 
