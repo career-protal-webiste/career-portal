@@ -1,12 +1,11 @@
 // lib/db.ts
 import { sql } from '@vercel/postgres';
 
-export type JobSource = 'lever' | 'greenhouse';
-
-export type JobUpsertInput = {
+/** Shape we insert/upsert into the jobs table */
+export type JobRecord = {
   fingerprint: string;
-  source: JobSource;
-  source_id: string;
+  source: 'lever' | 'greenhouse' | string;
+  source_id: string | null;
 
   company: string;
   title: string;
@@ -19,98 +18,76 @@ export type JobUpsertInput = {
 
   url: string;
 
-  // Dates can be Date or string; we coerce to ISO
-  posted_at?: Date | string | null;
-  scraped_at: Date | string;
+  posted_at?: string | Date | null;   // we will normalize to ISO string
+  scraped_at?: string | Date | null;  // we will normalize to ISO string
 
   description?: string | null;
   salary_min?: number | null;
   salary_max?: number | null;
   currency?: string | null;
-
-  // Accept array or string; we will store text (comma-separated)
-  visa_tags?: string[] | string | null;
+  visa_tags?: string[] | null;        // stored as text[] in PG
 };
 
-function asIso(d?: Date | string | null): string | null {
-  if (!d) return null;
-  if (typeof d === 'string') return d;
-  return d.toISOString();
-}
-
-function asVisaText(v?: string[] | string | null): string | null {
-  if (!v) return null;
-  return Array.isArray(v) ? (v.length ? v.join(',') : null) : v;
-}
-
-/**
- * Create the jobs table if it doesn't exist.
- * Also normalize visa_tags to TEXT for simpler inserts (no array typing issues).
- */
-export async function migrate(): Promise<void> {
+/** Create the jobs table and indexes (idempotent). Run once via /api/migrate */
+export async function migrate() {
+  // 1) table
   await sql`
     CREATE TABLE IF NOT EXISTS jobs (
-      id              SERIAL PRIMARY KEY,
-      fingerprint     TEXT UNIQUE NOT NULL,
-      source          TEXT NOT NULL CHECK (source IN ('lever','greenhouse')),
-      source_id       TEXT NOT NULL,
-
-      company         TEXT NOT NULL,
-      title           TEXT NOT NULL,
-
-      location        TEXT,
-      remote          BOOLEAN,
-      employment_type TEXT,
-      experience_hint TEXT,
-      category        TEXT,
-
-      url             TEXT NOT NULL,
-
-      posted_at       TIMESTAMPTZ,
-      scraped_at      TIMESTAMPTZ NOT NULL,
-
-      description     TEXT,
-      salary_min      NUMERIC,
-      salary_max      NUMERIC,
-      currency        TEXT,
-      visa_tags       TEXT
+      fingerprint     text PRIMARY KEY,
+      source          text NOT NULL,
+      source_id       text,
+      company         text NOT NULL,
+      title           text NOT NULL,
+      location        text,
+      remote          boolean,
+      employment_type text,
+      experience_hint text,
+      category        text,
+      url             text NOT NULL,
+      posted_at       timestamptz,
+      scraped_at      timestamptz NOT NULL,
+      description     text,
+      salary_min      numeric,
+      salary_max      numeric,
+      currency        text,
+      visa_tags       text[]
     );
-
-    CREATE INDEX IF NOT EXISTS idx_jobs_company   ON jobs(company);
-    CREATE INDEX IF NOT EXISTS idx_jobs_posted_at ON jobs(posted_at DESC NULLS LAST);
   `;
 
-  // If a previous run created visa_tags as TEXT[], quietly convert it to TEXT.
-  try {
-    await sql`ALTER TABLE jobs
-              ALTER COLUMN visa_tags TYPE TEXT
-              USING CASE
-                     WHEN visa_tags IS NULL THEN NULL
-                     ELSE array_to_string(visa_tags, ',')
-                   END`;
-  } catch (_e) {
-    // ignore if it's already TEXT or column doesn't exist yet
-  }
+  // 2) helpful indexes (each statement must be called separately)
+  await sql`CREATE INDEX IF NOT EXISTS idx_jobs_company   ON jobs (company);`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_jobs_posted_at ON jobs (posted_at DESC NULLS LAST);`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_jobs_source    ON jobs (source, source_id);`;
 }
 
-export async function upsertJob(rec: JobUpsertInput): Promise<void> {
-  const posted = asIso(rec.posted_at);
-  const scraped = asIso(rec.scraped_at) ?? new Date().toISOString();
-  const desc = (rec.description ?? '').slice(0, 1200);
-  const visaText = asVisaText(rec.visa_tags);
+/** Insert or update a job row by fingerprint (idempotent). */
+export async function upsertJob(rec: JobRecord) {
+  // Normalize dates to ISO strings so PG can cast to timestamptz
+  const posted =
+    rec.posted_at ? new Date(rec.posted_at as any).toISOString() : null;
+  const scraped =
+    rec.scraped_at
+      ? new Date(rec.scraped_at as any).toISOString()
+      : new Date().toISOString();
+
+  // Turn visa_tags into a Postgres array (or null)
+  const visaArray =
+    rec.visa_tags && rec.visa_tags.length > 0 ? sql.array(rec.visa_tags) : null;
+
+  const desc = rec.description ?? null;
 
   await sql`
     INSERT INTO jobs (
       fingerprint, source, source_id,
-      company, title, location, remote, employment_type, experience_hint, category,
-      url, posted_at, scraped_at, description, salary_min, salary_max, currency, visa_tags
+      company, title, location, remote, employment_type,
+      experience_hint, category, url, posted_at, scraped_at,
+      description, salary_min, salary_max, currency, visa_tags
     )
     VALUES (
-      ${rec.fingerprint}, ${rec.source}, ${rec.source_id},
-      ${rec.company}, ${rec.title}, ${rec.location ?? null}, ${rec.remote ?? null},
-      ${rec.employment_type ?? null}, ${rec.experience_hint ?? null}, ${rec.category ?? null},
-      ${rec.url}, ${posted}, ${scraped}, ${desc || null},
-      ${rec.salary_min ?? null}, ${rec.salary_max ?? null}, ${rec.currency ?? null}, ${visaText}
+      ${rec.fingerprint}, ${rec.source}, ${rec.source_id ?? null},
+      ${rec.company}, ${rec.title}, ${rec.location ?? null}, ${rec.remote ?? null}, ${rec.employment_type ?? null},
+      ${rec.experience_hint ?? null}, ${rec.category ?? null}, ${rec.url}, ${posted}, ${scraped},
+      ${desc}, ${rec.salary_min ?? null}, ${rec.salary_max ?? null}, ${rec.currency ?? null}, ${visaArray}
     )
     ON CONFLICT (fingerprint) DO UPDATE SET
       source          = EXCLUDED.source,
@@ -123,7 +100,7 @@ export async function upsertJob(rec: JobUpsertInput): Promise<void> {
       experience_hint = EXCLUDED.experience_hint,
       category        = EXCLUDED.category,
       url             = EXCLUDED.url,
-      posted_at       = EXCLUDED.posted_at,
+      posted_at       = COALESCE(EXCLUDED.posted_at, jobs.posted_at),
       scraped_at      = EXCLUDED.scraped_at,
       description     = EXCLUDED.description,
       salary_min      = EXCLUDED.salary_min,
@@ -131,27 +108,4 @@ export async function upsertJob(rec: JobUpsertInput): Promise<void> {
       currency        = EXCLUDED.currency,
       visa_tags       = EXCLUDED.visa_tags;
   `;
-}
-
-export type JobRow = {
-  id: number;
-  company: string;
-  title: string;
-  location: string | null;
-  remote: boolean | null;
-  url: string;
-  posted_at: string | null;
-  scraped_at: string;
-  source: JobSource;
-  category: string | null;
-};
-
-export async function listJobs(limit = 50): Promise<JobRow[]> {
-  const { rows } = await sql<JobRow>`
-    SELECT id, company, title, location, remote, url, posted_at, scraped_at, source, category
-    FROM jobs
-    ORDER BY posted_at DESC NULLS LAST, id DESC
-    LIMIT ${limit};
-  `;
-  return rows;
 }
