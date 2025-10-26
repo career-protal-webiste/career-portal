@@ -1,13 +1,16 @@
+// lib/db.ts
 import { sql } from '@vercel/postgres';
 
-// Ensure the jobs table exists
-export async function createJobsTable() {
-  await sql`
+/**
+ * Creates the jobs table (and indexes) if it does not exist.
+ * Safe to call on every request.
+ */
+export async function ensureSchema() {
+  await sql/* sql */`
     CREATE TABLE IF NOT EXISTS jobs (
-      id SERIAL PRIMARY KEY,
+      fingerprint TEXT PRIMARY KEY,
       source TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      fingerprint TEXT UNIQUE NOT NULL,
+      source_id TEXT,
       company TEXT NOT NULL,
       title TEXT NOT NULL,
       location TEXT,
@@ -16,43 +19,106 @@ export async function createJobsTable() {
       experience_hint TEXT,
       category TEXT,
       url TEXT NOT NULL,
-      posted_at TIMESTAMP NOT NULL,
-      scraped_at TIMESTAMP DEFAULT NOW(),
+      posted_at TIMESTAMPTZ,
+      scraped_at TIMESTAMPTZ NOT NULL,
       description TEXT,
-      salary_min INTEGER,
-      salary_max INTEGER,
+      salary_min NUMERIC,
+      salary_max NUMERIC,
       currency TEXT,
       visa_tags TEXT[]
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_source_sourceid ON jobs(source, source_id);
+
+    CREATE INDEX IF NOT EXISTS idx_jobs_posted_at ON jobs (posted_at DESC NULLS LAST);
+    CREATE INDEX IF NOT EXISTS idx_jobs_category  ON jobs (category);
   `;
 }
 
-// Insert a job if it doesn’t already exist
-export async function upsertJob(job: any) {
-  await createJobsTable();
-  await sql`
-    INSERT INTO jobs (
-      source, source_id, fingerprint, company, title, location,
-      remote, employment_type, experience_hint, category, url,
-      posted_at, scraped_at, description, salary_min, salary_max,
-      currency, visa_tags
-    )
-    VALUES (
-      ${job.source}, ${job.source_id}, ${job.fingerprint}, ${job.company}, ${job.title},
-      ${job.location ?? null}, ${job.remote ?? null}, ${job.employment_type ?? null},
-      ${job.experience_hint ?? null}, ${job.category ?? null}, ${job.url},
-      ${job.posted_at}, ${job.scraped_at ?? new Date()},
-      ${job.description ?? null}, ${job.salary_min ?? null}, ${job.salary_max ?? null},
-      ${job.currency ?? null}, ${job.visa_tags ?? null}
-    )
-    ON CONFLICT (fingerprint) DO NOTHING;
-  `;
-}
+export type JobRow = {
+  fingerprint: string;
+  source: string;
+  source_id: string | null;
+  company: string;
+  title: string;
+  location: string | null;
+  remote: boolean | null;
+  employment_type: string | null;
+  experience_hint: string | null;
+  category: string | null;
+  url: string;
+  posted_at: Date | null;
+  scraped_at: Date;
+  description: string | null;
+  salary_min: number | null;
+  salary_max: number | null;
+  currency: string | null;
+  visa_tags: string[] | null;
+};
 
-// Fetch jobs for homepage
-export async function getJobs(limit: number = 50) {
-  await createJobsTable();
-  const { rows } = await sql`SELECT * FROM jobs ORDER BY posted_at DESC LIMIT ${limit}`;
+export async function getJobs(limit = 50): Promise<JobRow[]> {
+  const { rows } = await sql<JobRow>`
+    SELECT *
+    FROM jobs
+    ORDER BY posted_at DESC NULLS LAST, scraped_at DESC
+    LIMIT ${limit};
+  `;
   return rows;
+}
+
+/**
+ * Insert or update a job by fingerprint.
+ * Pass only known columns from the table above.
+ */
+export async function upsertJob(job: Partial<JobRow> & Pick<JobRow,
+  'fingerprint' | 'source' | 'company' | 'title' | 'url' | 'scraped_at'
+>) {
+  const {
+    fingerprint,
+    source,
+    source_id = null,
+    company,
+    title,
+    location = null,
+    remote = null,
+    employment_type = null,
+    experience_hint = null,
+    category = null,
+    url,
+    posted_at = null,
+    scraped_at,
+    description = null,
+    salary_min = null,
+    salary_max = null,
+    currency = null,
+    visa_tags = null,
+  } = job;
+
+  await sql/* sql */`
+    INSERT INTO jobs (
+      fingerprint, source, source_id, company, title, location, remote,
+      employment_type, experience_hint, category, url, posted_at, scraped_at,
+      description, salary_min, salary_max, currency, visa_tags
+    ) VALUES (
+      ${fingerprint}, ${source}, ${source_id}, ${company}, ${title}, ${location}, ${remote},
+      ${employment_type}, ${experience_hint}, ${category}, ${url}, ${posted_at}, ${scraped_at},
+      ${description}, ${salary_min}, ${salary_max}, ${currency}, ${visa_tags}
+    )
+    ON CONFLICT (fingerprint)
+    DO UPDATE SET
+      source_id = EXCLUDED.source_id,
+      company = EXCLUDED.company,
+      title = EXCLUDED.title,
+      location = EXCLUDED.location,
+      remote = EXCLUDED.remote,
+      employment_type = EXCLUDED.employment_type,
+      experience_hint = EXCLUDED.experience_hint,
+      category = EXCLUDED.category,
+      url = EXCLUDED.url,
+      posted_at = COALESCE(EXCLUDED.posted_at, jobs.posted_at),
+      scraped_at = EXCLUDED.scraped_at,
+      description = EXCLUDED.description,
+      salary_min = EXCLUDED.salary_min,
+      salary_max = EXCLUDED.salary_max,
+      currency = EXCLUDED.currency,
+      visa_tags = EXCLUDED.visa_tags;
+  `;
 }
