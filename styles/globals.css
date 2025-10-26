@@ -49,9 +49,8 @@ a { color: inherit; text-decoration: none; }
   display: grid;
   grid-template-columns: 1fr;
   gap: 12px;
-  margin: 28px 0 18px;
+  margin: 28px 0 12px;
 }
-
 @media (min-width: 760px) {
   .toolbar { grid-template-columns: 1fr 360px; align-items: center; }
 }
@@ -80,18 +79,30 @@ a { color: inherit; text-decoration: none; }
   user-select: none;
 }
 .chip.active { border-color: var(--brand); color: #dbe8ff; }
+.chip.clear { color: var(--muted); }
+.chip.clear:hover { border-color: #344252; color: #d1dae5; }
 
-.segment { display: flex; gap: 6px; justify-content: flex-end; }
+.segment { display: flex; gap: 6px; flex-wrap: wrap; }
 .segment button {
   background: #0f1317; border: 1px solid #222a33; color: var(--muted);
   height: 36px; padding: 0 10px; border-radius: 10px; cursor: pointer;
 }
 .segment button.active { border-color: var(--brand); color: #cfe0ff; }
 
+.controls { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin: 10px 0 6px; }
+.select, .check { display:flex; gap:8px; align-items:center; color: var(--muted); font-size: 14px; }
+.select select {
+  background:#0f1317; color: var(--text); border:1px solid #222a33;
+  border-radius:10px; height:36px; padding:0 10px;
+}
+.check input[type="checkbox"] {
+  width: 16px; height: 16px; accent-color: #4f8cff; cursor: pointer;
+}
+
 .count {
   color: var(--muted);
   font-size: 14px;
-  margin: 16px 0 6px;
+  margin: 12px 0 6px;
 }
 
 .grid {
