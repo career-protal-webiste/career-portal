@@ -13,8 +13,8 @@ export type JobRow = {
   experience_hint: string | null;
   category: string | null;
   url: string | null;
-  posted_at: string | null;   // ISO
-  scraped_at: string | null;  // ISO
+  posted_at: string | null;
+  scraped_at: string | null;
   description: string | null;
   salary_min: number | null;
   salary_max: number | null;
@@ -22,22 +22,10 @@ export type JobRow = {
   visa_tags: string[] | null;
 };
 
-// Map PG date/timestamp to ISO strings (and keep everything else as-is)
 function normalizeDates<T extends { posted_at: any; scraped_at: any }>(r: T) {
-  const toISO = (v: any) =>
-    v == null ? null : new Date(v as any).toISOString();
-  return {
-    ...r,
-    posted_at: toISO(r.posted_at),
-    scraped_at: toISO(r.scraped_at),
-  } as any;
+  const toISO = (v: any) => (v == null ? null : new Date(v as any).toISOString());
+  return { ...r, posted_at: toISO(r.posted_at), scraped_at: toISO(r.scraped_at) } as any;
 }
-
-const COLS = `
-  fingerprint, source, source_id, company, title, location, remote,
-  employment_type, experience_hint, category, url,
-  posted_at, scraped_at, description, salary_min, salary_max, currency, visa_tags
-`;
 
 export async function listJobs(limit = 100): Promise<JobRow[]> {
   const { rows } = await sql<JobRow>`
@@ -65,8 +53,12 @@ export async function getJobById(id: string): Promise<JobRow | null> {
   return rows[0] ? normalizeDates(rows[0]) : null;
 }
 
+// --- alias used by pages/jobs/[fingerprint].tsx ---
+export async function getJobByFingerprint(fingerprint: string) {
+  return getJobById(fingerprint);
+}
+
 export async function listSimilar(job: JobRow, limit = 6): Promise<JobRow[]> {
-  // Prefer same company, then same category, else latest
   if (job.company) {
     const r1 = await sql<JobRow>`
       SELECT
