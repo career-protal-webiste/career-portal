@@ -1,56 +1,73 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { upsertJob } from '../../../lib/db';
-import { createFingerprint, roleMatches, inferExperience, normalize } from '../../../lib/jobs';
+import {
+  createFingerprint,
+  roleMatches,
+  inferExperience,
+  normalize,
+} from '../../../lib/jobs';
 
-// Edit this list anytime
-const companies = ['stripe','databricks','snowflake','hubspot','gusto','notion'];
+// Add or remove companies as needed.
+const COMPANIES = ['databricks', 'snowflake', 'notion', 'hubspot'];
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  try {
-    let inserted = 0;
+export default async function handler(
+  _req: NextApiRequest,
+  res: NextApiResponse
+) {
+  let inserted = 0;
 
-    for (const company of companies) {
-      const url = `https://api.lever.co/v0/postings/${company}?mode=json`;
-      const r = await fetch(url, { cache: 'no-store' });
-      if (!r.ok) continue;
+  for (const company of COMPANIES) {
+    try {
+      const response = await fetch(
+        `https://api.lever.co/v0/postings/${company}?mode=json`
+      );
+      if (!response.ok) continue;
 
-      const postings: any[] = await r.json();
-      for (const p of postings) {
-        const title = p?.text || p?.title || '';
-        const desc = p?.descriptionPlain || '';
-        if (!roleMatches(title, desc)) continue;
+      const postings = (await response.json()) as any[];
+      for (const posting of postings) {
+        const title = posting.text || posting.title || '';
+        const description = posting.descriptionPlain || '';
+        // Check if this is a role we care about
+        if (!roleMatches(title, description)) continue;
 
-        const fp = createFingerprint(
-          'lever',
-          String(p?.id ?? ''),
-          p?.categories?.team ?? company,
-          p?.categories?.location ?? '',
-          p?.hostedUrl ?? ''
+        // Use company+title+location+url for deduplication
+        const fingerprint = createFingerprint(
+          posting.categories?.team || posting.company || company,
+          title,
+          posting.categories?.location,
+          posting.hostedUrl
         );
 
-        await upsertJob({
+        const job = {
           source: 'lever',
-          source_id: String(p?.id ?? ''),
-          fingerprint: fp,
-          company: p?.categories?.team || company,
+          source_id: String(posting.id),
+          fingerprint,
+          company: posting.categories?.team || posting.company || company,
           title,
-          location: p?.categories?.location ?? null,
-          remote: /remote/i.test(p?.categories?.location ?? ''),
-          employment_type: p?.categories?.commitment ?? null,
-          experience_hint: inferExperience(title, desc),
+          location: posting.categories?.location ?? null,
+          remote:
+            /remote/i.test(posting.categories?.location || '') ||
+            posting.workplaceType === 'remote',
+          employment_type: posting.categories?.commitment ?? null,
+          experience_hint: inferExperience(title, description),
           category: normalize(title).category,
-          url: p?.hostedUrl ?? '',
-          posted_at: new Date(p?.createdAt || Date.now()),
-          description: desc?.slice(0, 1200) || null
-        });
+          url: posting.hostedUrl,
+          posted_at: new Date(posting.createdAt),
+          scraped_at: new Date(),
+          description: description?.slice(0, 1200) || null,
+          salary_min: posting.salaryRange?.min ?? null,
+          salary_max: posting.salaryRange?.max ?? null,
+          currency: posting.salaryRange?.currency ?? null,
+          visa_tags: posting.tags?.filter((t: string) => /visa/i.test(t)) ?? null,
+        };
 
-        inserted++;
+        await upsertJob(job);
+        inserted += 1;
       }
+    } catch (error) {
+      console.error(`Failed to fetch Lever postings for ${company}:`, error);
     }
-
-    return res.status(200).json({ inserted });
-  } catch (err: any) {
-    console.error('Lever cron error:', err?.message || err);
-    return res.status(500).json({ error: 'lever_cron_failed' });
   }
+
+  res.status(200).json({ inserted });
 }
