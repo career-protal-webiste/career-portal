@@ -1,58 +1,74 @@
-// pages/job/[fingerprint].tsx
+// pages/jobs/[fingerprint].tsx
 import type { GetServerSideProps } from 'next';
 import Link from 'next/link';
-import { getJobByFingerprint, type JobRow } from '../../lib/queries';
+import { getJobByFingerprint, listSimilar, type JobRow } from '../../lib/queries';
 
-type Props = { job: JobRow };
+type Props = { job: JobRow | null; similar: JobRow[]; error?: string | null };
 
-export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
-  const fp = String(ctx.params?.fingerprint ?? '');
-  const job = await getJobByFingerprint(fp);
-  if (!job) return { notFound: true };
-  return { props: { job } };
-};
-
-function money(min?: number | null, max?: number | null, currency?: string | null) {
-  if (!currency || (min == null && max == null)) return null;
-  const fmt = (v: number) => v.toLocaleString(undefined, { style: 'currency', currency });
-  if (min != null && max != null) return `${fmt(min)}–${fmt(max)}`;
-  if (min != null) return `${fmt(min)}+`;
-  return fmt(max!);
-}
-
-export default function JobDetail({ job }: Props) {
-  const posted = job.posted_at ?? job.scraped_at;
-  const pay = money(job.salary_min, job.salary_max, job.currency);
-
+export default function JobDetail({ job, similar, error }: Props) {
+  if (!job) {
+    return (
+      <main style={{ maxWidth: 760, margin: '48px auto', padding: '0 16px' }}>
+        <p>Job not found.</p>
+        {error ? <p style={{ color: '#b91c1c' }}>{error}</p> : null}
+        <p><Link href="/">← Back</Link></p>
+      </main>
+    );
+  }
   return (
-    <div className="detail">
-      <div className="kicker">
-        <Link href="/" className="btn ghost">← Back</Link>
+    <main style={{ maxWidth: 760, margin: '48px auto', padding: '0 16px', fontFamily: 'ui-sans-serif, system-ui' }}>
+      <p><Link href="/">← Back</Link></p>
+      <h1 style={{ fontSize: 32, fontWeight: 800, marginTop: 8 }}>{job.title}</h1>
+      <p style={{ color: '#6b7280', marginTop: 4 }}>
+        {job.company ?? '—'} • {job.location ?? '—'} {job.remote ? '• Remote' : ''}
+      </p>
+
+      <div style={{ marginTop: 16 }}>
+        {job.description ? <pre style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{job.description}</pre> : <em>No description.</em>}
       </div>
 
-      <h1>{job.title}</h1>
-      <div className="row" style={{marginTop: 6}}>
-        <span><strong>{job.company}</strong></span>
-        {job.location ? <span>• {job.location}</span> : null}
-        {job.category ? <span>• {job.category}</span> : null}
-        {job.employment_type ? <span>• {job.employment_type}</span> : null}
+      <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
+        {job.url ? (
+          <a href={job.url} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>
+            Apply on source →
+          </a>
+        ) : null}
       </div>
 
-      <div className="row" style={{marginTop: 6}}>
-        {posted ? <span>Posted: {new Date(posted).toUTCString()}</span> : null}
-        {pay ? <span>• Salary: {pay}</span> : null}
-        {Array.isArray(job.visa_tags) && job.visa_tags.length
-          ? <span>• Visa: {job.visa_tags.join(', ')}</span>
-          : null}
-        <span>• Source: {job.source ?? '—'}</span>
-      </div>
+      {similar.length ? (
+        <>
+          <h2 style={{ marginTop: 32, fontWeight: 700 }}>Similar roles</h2>
+          <ul style={{ display: 'grid', gap: 12, marginTop: 8 }}>
+            {similar.map((s) => (
+              <li key={s.fingerprint} style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12 }}>
+                <div style={{ fontSize: 12, color: '#6b7280' }}>{s.company ?? '—'} • {s.location ?? '—'}</div>
+                <div style={{ fontWeight: 600 }}>{s.title ?? 'Untitled role'}</div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                  <a href={s.url ?? '#'} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>Apply</a>
+                  <Link href={`/jobs/${s.fingerprint}`} style={{ textDecoration: 'underline' }}>Details</Link>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
 
-      <div className="actions" style={{marginTop: 16}}>
-        <a className="btn primary" href={job.url} target="_blank" rel="noreferrer">Apply</a>
-        <Link className="btn" href="/">All jobs</Link>
-      </div>
-
-      {job.description && <div className="desc">{job.description}</div>}
-    </div>
+      {error ? (
+        <p style={{ color: '#b91c1c', marginTop: 12 }}>Partial error: {error}</p>
+      ) : null}
+    </main>
   );
 }
+
+export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
+  const id = String(ctx.params?.fingerprint ?? '');
+  try {
+    const job = await getJobByFingerprint(id);
+    if (!job) return { props: { job: null, similar: [] } };
+    const similar = await listSimilar(job, 6);
+    return { props: { job, similar } };
+  } catch (e: any) {
+    console.error('Job detail error:', e);
+    return { props: { job: null, similar: [], error: e?.message ?? 'server error' } };
+  }
+};
