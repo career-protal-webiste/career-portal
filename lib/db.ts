@@ -19,7 +19,7 @@ export type JobUpsertInput = {
 
   url: string;
 
-  // Accept Date or string; we will coerce to ISO before sending to Postgres
+  // Dates can be Date or string; we coerce to ISO
   posted_at?: Date | string | null;
   scraped_at: Date | string;
 
@@ -27,7 +27,9 @@ export type JobUpsertInput = {
   salary_min?: number | null;
   salary_max?: number | null;
   currency?: string | null;
-  visa_tags?: string[] | null;
+
+  // Accept array or string; we will store text (comma-separated)
+  visa_tags?: string[] | string | null;
 };
 
 function asIso(d?: Date | string | null): string | null {
@@ -36,50 +38,66 @@ function asIso(d?: Date | string | null): string | null {
   return d.toISOString();
 }
 
+function asVisaText(v?: string[] | string | null): string | null {
+  if (!v) return null;
+  return Array.isArray(v) ? (v.length ? v.join(',') : null) : v;
+}
+
 /**
- * Creates the table if it doesn't exist.
- * Safe to call many times.
+ * Create the jobs table if it doesn't exist.
+ * Also normalize visa_tags to TEXT for simpler inserts (no array typing issues).
  */
 export async function migrate(): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS jobs (
-      id            SERIAL PRIMARY KEY,
-      fingerprint   TEXT UNIQUE NOT NULL,
-      source        TEXT NOT NULL CHECK (source IN ('lever','greenhouse')),
-      source_id     TEXT NOT NULL,
+      id              SERIAL PRIMARY KEY,
+      fingerprint     TEXT UNIQUE NOT NULL,
+      source          TEXT NOT NULL CHECK (source IN ('lever','greenhouse')),
+      source_id       TEXT NOT NULL,
 
-      company       TEXT NOT NULL,
-      title         TEXT NOT NULL,
+      company         TEXT NOT NULL,
+      title           TEXT NOT NULL,
 
-      location      TEXT,
-      remote        BOOLEAN,
+      location        TEXT,
+      remote          BOOLEAN,
       employment_type TEXT,
       experience_hint TEXT,
-      category      TEXT,
+      category        TEXT,
 
-      url           TEXT NOT NULL,
+      url             TEXT NOT NULL,
 
-      posted_at     TIMESTAMPTZ,
-      scraped_at    TIMESTAMPTZ NOT NULL,
+      posted_at       TIMESTAMPTZ,
+      scraped_at      TIMESTAMPTZ NOT NULL,
 
-      description   TEXT,
-      salary_min    NUMERIC,
-      salary_max    NUMERIC,
-      currency      TEXT,
-      visa_tags     TEXT[]
+      description     TEXT,
+      salary_min      NUMERIC,
+      salary_max      NUMERIC,
+      currency        TEXT,
+      visa_tags       TEXT
     );
 
-    CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
+    CREATE INDEX IF NOT EXISTS idx_jobs_company   ON jobs(company);
     CREATE INDEX IF NOT EXISTS idx_jobs_posted_at ON jobs(posted_at DESC NULLS LAST);
   `;
+
+  // If a previous run created visa_tags as TEXT[], quietly convert it to TEXT.
+  try {
+    await sql`ALTER TABLE jobs
+              ALTER COLUMN visa_tags TYPE TEXT
+              USING CASE
+                     WHEN visa_tags IS NULL THEN NULL
+                     ELSE array_to_string(visa_tags, ',')
+                   END`;
+  } catch (_e) {
+    // ignore if it's already TEXT or column doesn't exist yet
+  }
 }
 
 export async function upsertJob(rec: JobUpsertInput): Promise<void> {
-  // Coerce dates to ISO strings so the sql`` tag accepts them (fixes TS error)
   const posted = asIso(rec.posted_at);
   const scraped = asIso(rec.scraped_at) ?? new Date().toISOString();
-
   const desc = (rec.description ?? '').slice(0, 1200);
+  const visaText = asVisaText(rec.visa_tags);
 
   await sql`
     INSERT INTO jobs (
@@ -92,7 +110,7 @@ export async function upsertJob(rec: JobUpsertInput): Promise<void> {
       ${rec.company}, ${rec.title}, ${rec.location ?? null}, ${rec.remote ?? null},
       ${rec.employment_type ?? null}, ${rec.experience_hint ?? null}, ${rec.category ?? null},
       ${rec.url}, ${posted}, ${scraped}, ${desc || null},
-      ${rec.salary_min ?? null}, ${rec.salary_max ?? null}, ${rec.currency ?? null}, ${rec.visa_tags ?? null}
+      ${rec.salary_min ?? null}, ${rec.salary_max ?? null}, ${rec.currency ?? null}, ${visaText}
     )
     ON CONFLICT (fingerprint) DO UPDATE SET
       source          = EXCLUDED.source,
