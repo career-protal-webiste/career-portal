@@ -2,40 +2,55 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { upsertJob } from '../../../lib/db';
 import { createFingerprint, roleMatches, inferExperience, normalize } from '../../../lib/jobs';
 
+// Edit this list anytime
+const companies = ['stripe','databricks','snowflake','hubspot','gusto','notion'];
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const companies = ['databricks','snowflake','notion','hubspot']; // add more
-  let inserted = 0;
+  try {
+    let inserted = 0;
 
-  for (const company of companies) {
-    const response = await fetch(`https://api.lever.co/v0/postings/${company}?mode=json`);
-    if (!response.ok) continue;
+    for (const company of companies) {
+      const url = `https://api.lever.co/v0/postings/${company}?mode=json`;
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) continue;
 
-    const postings = await response.json();
-    for (const p of postings) {
-      const title = p.text || p.title || '';
-      if (!roleMatches(title)) continue;
+      const postings: any[] = await r.json();
+      for (const p of postings) {
+        const title = p?.text || p?.title || '';
+        const desc = p?.descriptionPlain || '';
+        if (!roleMatches(title, desc)) continue;
 
-      const fingerprint = createFingerprint('lever', p.id, p.categories?.team, p.categories?.location, p.hostedUrl);
-      const job = {
-        source: 'lever',
-        source_id: p.id,
-        fingerprint,
-        company: p.categories?.team || p.company || company,
-        title,
-        location: p.categories?.location,
-        remote: /remote/i.test(p.categories?.location || '') || p.workplaceType === 'remote',
-        employment_type: p.categories?.commitment,
-        experience_hint: inferExperience(title, p.descriptionPlain),
-        category: normalize(title).category,
-        url: p.hostedUrl,
-        posted_at: new Date(p.createdAt),
-        description: p.descriptionPlain?.slice(0, 1200),
-      };
+        const fp = createFingerprint(
+          'lever',
+          String(p?.id ?? ''),
+          p?.categories?.team ?? company,
+          p?.categories?.location ?? '',
+          p?.hostedUrl ?? ''
+        );
 
-      await upsertJob(job);
-      inserted++;
+        await upsertJob({
+          source: 'lever',
+          source_id: String(p?.id ?? ''),
+          fingerprint: fp,
+          company: p?.categories?.team || company,
+          title,
+          location: p?.categories?.location ?? null,
+          remote: /remote/i.test(p?.categories?.location ?? ''),
+          employment_type: p?.categories?.commitment ?? null,
+          experience_hint: inferExperience(title, desc),
+          category: normalize(title).category,
+          url: p?.hostedUrl ?? '',
+          posted_at: new Date(p?.createdAt || Date.now()),
+          description: desc?.slice(0, 1200) || null
+        });
+
+        inserted++;
+      }
     }
-  }
 
-  res.status(200).json({ inserted });
+    return res.status(200).json({ inserted });
+  } catch (err: any) {
+    console.error('Lever cron error:', err?.message || err);
+    return res.status(500).json({ error: 'lever_cron_failed' });
+  }
 }
