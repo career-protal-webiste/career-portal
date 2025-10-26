@@ -5,38 +5,31 @@ export type JobRecord = {
   fingerprint: string;
   source: 'lever' | 'greenhouse' | string;
   source_id: string | null;
-
   company: string;
   title: string;
-
   location?: string | null;
   remote?: boolean | null;
   employment_type?: string | null;
   experience_hint?: string | null;
   category?: string | null;
-
   url: string;
-
   posted_at?: string | Date | null;
   scraped_at?: string | Date | null;
-
   description?: string | null;
   salary_min?: number | null;
   salary_max?: number | null;
   currency?: string | null;
-  visa_tags?: string[] | null; // stored as text[] in PG
+  visa_tags?: string[] | null;
 };
 
-/** Turn ["h1","h1b"] into a Postgres array literal: {"h1","h1b"} */
-function toPgTextArrayLiteral(values?: string[] | null): string | null {
+function toPgArrayLiteral(values?: string[] | null): string | null {
   if (!values || values.length === 0) return null;
-  // escape embedded quotes
-  const items = values.map(v => `"${String(v).replace(/"/g, '\\"')}"`);
-  return `{${items.join(',')}}`; // e.g. {"a","b"}
+  const parts = values.map(v => `"${String(v).replace(/"/g, '\\"')}"`);
+  return `{${parts.join(',')}}`;
 }
 
-/** Create table + indexes. Each statement is a separate call (required). */
 export async function migrate() {
+  // Table
   await sql`
     CREATE TABLE IF NOT EXISTS jobs (
       fingerprint     text PRIMARY KEY,
@@ -59,34 +52,31 @@ export async function migrate() {
       visa_tags       text[]
     );
   `;
-
+  // Indexes (must be separate calls)
   await sql`CREATE INDEX IF NOT EXISTS idx_jobs_company   ON jobs (company);`;
   await sql`CREATE INDEX IF NOT EXISTS idx_jobs_posted_at ON jobs (posted_at DESC NULLS LAST);`;
-  await sql`CREATE INDEX IF NOT EXISTS idx_jobs_source    ON jobs (source, source_id);`;
 }
 
-/** Insert / update by fingerprint */
 export async function upsertJob(rec: JobRecord) {
+  // Normalize dates to ISO strings
   const posted  = rec.posted_at  ? new Date(rec.posted_at as any).toISOString()  : null;
   const scraped = rec.scraped_at ? new Date(rec.scraped_at as any).toISOString() : new Date().toISOString();
-  const desc    = rec.description ?? null;
-
-  // Build a *string* literal (Primitive) and cast to text[] in SQL.
-  const visaLiteral = toPgTextArrayLiteral(rec.visa_tags);
-
+  // Turn visa_tags into a text[] literal
+  const visaLit = toPgArrayLiteral(rec.visa_tags);
   await sql`
     INSERT INTO jobs (
-      fingerprint, source, source_id,
-      company, title, location, remote, employment_type,
-      experience_hint, category, url, posted_at, scraped_at,
-      description, salary_min, salary_max, currency, visa_tags
+      fingerprint, source, source_id, company, title,
+      location, remote, employment_type, experience_hint, category,
+      url, posted_at, scraped_at, description, salary_min, salary_max, currency, visa_tags
     )
     VALUES (
-      ${rec.fingerprint}, ${rec.source}, ${rec.source_id ?? null},
-      ${rec.company}, ${rec.title}, ${rec.location ?? null}, ${rec.remote ?? null}, ${rec.employment_type ?? null},
-      ${rec.experience_hint ?? null}, ${rec.category ?? null}, ${rec.url}, ${posted}, ${scraped},
-      ${desc}, ${rec.salary_min ?? null}, ${rec.salary_max ?? null}, ${rec.currency ?? null},
-      ${visaLiteral}::text[]
+      ${rec.fingerprint}, ${rec.source}, ${rec.source_id ?? null}, ${rec.company}, ${rec.title},
+      ${rec.location ?? null}, ${rec.remote ?? null}, ${rec.employment_type ?? null},
+      ${rec.experience_hint ?? null}, ${rec.category ?? null},
+      ${rec.url}, ${posted}, ${scraped},
+      ${rec.description ?? null},
+      ${rec.salary_min ?? null}, ${rec.salary_max ?? null}, ${rec.currency ?? null},
+      ${visaLit}::text[]
     )
     ON CONFLICT (fingerprint) DO UPDATE SET
       source          = EXCLUDED.source,
