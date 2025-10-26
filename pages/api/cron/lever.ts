@@ -1,84 +1,66 @@
+// pages/api/cron/lever.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { upsertJob, ensureSchema } from '../../../lib/db';
-import {
-  createFingerprint,
-  roleMatches,
-  inferExperience,
-  normalize,
-} from '../../../lib/jobs';
+import { upsertJob } from '../../../lib/db';
+import { createFingerprint, roleMatches, inferExperience, normalize } from '../../../lib/jobs';
 
-// Edit this list freely.
-const COMPANIES = ['databricks', 'snowflake', 'notion', 'hubspot'];
+const COMPANIES = ['databricks', 'snowflake', 'notion', 'hubspot']; // edit as you like
 
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
-  // If you open /api/cron/lever?all=1 it will bypass filtering for debug.
-  const insertAll = String(req.query.all || '') === '1';
-
-  await ensureSchema();
-
-  let scanned = 0;
-  let matched = 0;
+export default async function handler(_req: NextApiRequest, res: NextApiResponse) {
+  const allowAll = 'all' in (_req.query || {}); // /api/cron/lever?all=1 to skip filtering
   let inserted = 0;
 
   for (const company of COMPANIES) {
     try {
-      const response = await fetch(
-        `https://api.lever.co/v0/postings/${company}?mode=json`
-      );
+      const response = await fetch(`https://api.lever.co/v0/postings/${company}?mode=json`);
       if (!response.ok) continue;
 
       const postings = (await response.json()) as any[];
+
       for (const posting of postings) {
-        scanned++;
-
-        const title = posting.text || posting.title || '';
+        const title = posting.text || '';
         const description = posting.descriptionPlain || '';
-        const isMatch = insertAll || roleMatches(title, description);
-        if (!isMatch) continue;
-        matched++;
 
-        const fp = createFingerprint(
-          posting.categories?.team || posting.company || company,
+        if (!allowAll && !roleMatches(title, description)) continue;
+
+        const companyName = posting.categories?.team || posting.company || company;
+        const locationName = posting.categories?.location ?? null;
+
+        const fingerprint = createFingerprint(
+          companyName,
           title,
-          posting.categories?.location,
+          locationName ?? undefined,
           posting.hostedUrl
         );
 
-        const job = {
+        await upsertJob({
+          fingerprint,
           source: 'lever',
           source_id: String(posting.id),
-          fingerprint: fp,
-          company: posting.categories?.team || posting.company || company,
+          company: companyName,
           title,
-          location: posting.categories?.location ?? null,
+          location: locationName,
           remote:
             /remote/i.test(posting.categories?.location || '') ||
             posting.workplaceType === 'remote',
           employment_type: posting.categories?.commitment ?? null,
           experience_hint: inferExperience(title, description),
-          category: normalize(title).category,
+          category: normalize(posting.categories?.team),
           url: posting.hostedUrl,
           posted_at: posting.createdAt ? new Date(posting.createdAt) : null,
           scraped_at: new Date(),
-          description: description ? description.slice(0, 1200) : null,
-          salary_min: posting.salaryRange?.min ?? null,
-          salary_max: posting.salaryRange?.max ?? null,
-          currency: posting.salaryRange?.currency ?? null,
-          visa_tags: Array.isArray(posting.tags)
-            ? posting.tags.filter((t: string) => /visa/i.test(t)) ?? null
-            : null,
-        } as const;
+          description,
+          salary_min: posting.salaryRange2?.min ?? null,
+          salary_max: posting.salaryRange2?.max ?? null,
+          currency: posting.salaryRange2?.currency ?? null,
+          visa_tags: posting.tags?.filter((t: string) => /visa/i.test(t)) ?? null,
+        });
 
-        await upsertJob(job);
-        inserted++;
+        inserted += 1;
       }
     } catch (error) {
       console.error(`Failed to fetch Lever postings for ${company}:`, error);
     }
   }
 
-  res.status(200).json({ scanned, matched, inserted, debug_all: insertAll });
+  res.status(200).json({ inserted });
 }
