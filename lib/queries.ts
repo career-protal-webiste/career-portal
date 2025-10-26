@@ -8,13 +8,13 @@ export type JobRow = {
   company: string | null;
   title: string | null;
   location: string | null;
-  remote: string | boolean | null;
+  remote: boolean | string | null;
   employment_type: string | null;
   experience_hint: string | null;
   category: string | null;
-  url: string;
-  posted_at: string | null;     // ISO string in UTC
-  scraped_at: string | null;    // ISO string in UTC
+  url: string | null;
+  posted_at: string | null;   // ISO
+  scraped_at: string | null;  // ISO
   description: string | null;
   salary_min: number | null;
   salary_max: number | null;
@@ -22,33 +22,68 @@ export type JobRow = {
   visa_tags: string[] | null;
 };
 
-export async function listJobs(limit = 200): Promise<JobRow[]> {
-  // Return ISO strings to avoid Date typing issues in the build
-  const { rows } = await sql<JobRow>`
-    SELECT
-      fingerprint, source, source_id, company, title, location, remote,
-      employment_type, experience_hint, category, url,
-      to_char(posted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')  AS posted_at,
-      to_char(scraped_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS scraped_at,
-      description, salary_min, salary_max, currency, visa_tags
-    FROM jobs
-    ORDER BY posted_at DESC NULLS LAST
-    LIMIT ${limit};
-  `;
-  return rows;
+const COLUMNS = `
+ fingerprint, source, source_id, company, title, location, remote,
+ employment_type, experience_hint, category, url,
+ posted_at, scraped_at, description, salary_min, salary_max, currency, visa_tags
+`;
+
+function normalizeDates<T extends { posted_at: any; scraped_at: any }>(r: T) {
+  return {
+    ...r,
+    posted_at: r.posted_at ? new Date(r.posted_at as any).toISOString() : null,
+    scraped_at: r.scraped_at ? new Date(r.scraped_at as any).toISOString() : null,
+  };
 }
 
-export async function getJobByFingerprint(fingerprint: string): Promise<JobRow | null> {
+export async function listJobs(limit = 100): Promise<JobRow[]> {
   const { rows } = await sql<JobRow>`
-    SELECT
-      fingerprint, source, source_id, company, title, location, remote,
-      employment_type, experience_hint, category, url,
-      to_char(posted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')  AS posted_at,
-      to_char(scraped_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS scraped_at,
-      description, salary_min, salary_max, currency, visa_tags
+    SELECT ${sql.raw(COLUMNS)}
     FROM jobs
-    WHERE fingerprint = ${fingerprint}
-    LIMIT 1;
+    ORDER BY posted_at DESC NULLS LAST, scraped_at DESC NULLS LAST
+    LIMIT ${limit}
   `;
-  return rows[0] ?? null;
+  return rows.map(normalizeDates);
+}
+
+export async function getJobById(id: string): Promise<JobRow | null> {
+  const { rows } = await sql<JobRow>`
+    SELECT ${sql.raw(COLUMNS)}
+    FROM jobs
+    WHERE fingerprint = ${id}
+    LIMIT 1
+  `;
+  return rows[0] ? normalizeDates(rows[0]) : null;
+}
+
+export async function listSimilar(job: JobRow, limit = 6): Promise<JobRow[]> {
+  // Prefer same company; then same category; else latest.
+  if (job.company) {
+    const r1 = await sql<JobRow>`
+      SELECT ${sql.raw(COLUMNS)}
+      FROM jobs
+      WHERE company = ${job.company} AND fingerprint <> ${job.fingerprint}
+      ORDER BY posted_at DESC NULLS LAST, scraped_at DESC NULLS LAST
+      LIMIT ${limit}
+    `;
+    if (r1.rows.length) return r1.rows.map(normalizeDates);
+  }
+  if (job.category) {
+    const r2 = await sql<JobRow>`
+      SELECT ${sql.raw(COLUMNS)}
+      FROM jobs
+      WHERE category = ${job.category} AND fingerprint <> ${job.fingerprint}
+      ORDER BY posted_at DESC NULLS LAST, scraped_at DESC NULLS LAST
+      LIMIT ${limit}
+    `;
+    if (r2.rows.length) return r2.rows.map(normalizeDates);
+  }
+  const r3 = await sql<JobRow>`
+    SELECT ${sql.raw(COLUMNS)}
+    FROM jobs
+    WHERE fingerprint <> ${job.fingerprint}
+    ORDER BY posted_at DESC NULLS LAST, scraped_at DESC NULLS LAST
+    LIMIT ${limit}
+  `;
+  return r3.rows.map(normalizeDates);
 }
