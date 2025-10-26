@@ -1,27 +1,21 @@
 // pages/index.tsx
-import type { GetServerSideProps } from 'next';
 import Head from 'next/head';
-import { ensureSchema, getJobs, JobRow } from '../lib/db';
+import type { GetServerSideProps } from 'next';
+import { getLatestJobs, JobRecord } from '../lib/db';
 
-type Props = { jobs: (JobRow & { posted_at_iso: string | null; scraped_at_iso: string })[] };
+type Props = { jobs: JobRecord[]; error?: string | null };
 
 export const getServerSideProps: GetServerSideProps<Props> = async () => {
-  // Make sure the table exists before we query it (prevents 500 on first load).
-  await ensureSchema();
-
-  const rows = await getJobs(50);
-
-  // Convert Dates to strings so Next can serialize them
-  const jobs = rows.map((j) => ({
-    ...j,
-    posted_at_iso: j.posted_at ? j.posted_at.toISOString() : null,
-    scraped_at_iso: j.scraped_at.toISOString(),
-  }));
-
-  return { props: { jobs } };
+  try {
+    const jobs = await getLatestJobs(50);
+    return { props: { jobs } };
+  } catch (e: any) {
+    console.error('Home SSR error:', e);
+    return { props: { jobs: [], error: e?.message || 'Unknown error' } };
+  }
 };
 
-export default function Home({ jobs }: Props) {
+export default function Home({ jobs, error }: Props) {
   return (
     <>
       <Head>
@@ -29,36 +23,52 @@ export default function Home({ jobs }: Props) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
 
-      <main style={{ maxWidth: 960, margin: '40px auto', padding: '0 16px', fontFamily: 'ui-sans-serif, system-ui' }}>
-        <h1 style={{ fontSize: 28, marginBottom: 12 }}>Latest roles</h1>
-        <p style={{ color: '#888', marginBottom: 24 }}>
-          Showing {jobs.length} jobs. Use /api/cron/lever?all=1 and /api/cron/greenhouse?all=1 to load data the first time.
-        </p>
+      <main style={{ maxWidth: 960, margin: '40px auto', padding: '0 16px' }}>
+        <h1>Careers Portal</h1>
 
-        {jobs.length === 0 ? (
-          <div style={{ padding: 16, border: '1px solid #eee', borderRadius: 12 }}>
-            No jobs yet. Run the cron URLs above (with <code>?all=1</code>) and refresh.
-          </div>
-        ) : (
-          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-            {jobs.map((j) => (
-              <li key={j.fingerprint} style={{ padding: 16, border: '1px solid #eee', borderRadius: 12, marginBottom: 12 }}>
-                <div style={{ fontWeight: 600 }}>
-                  {j.title} — {j.company}
-                </div>
-                <div style={{ color: '#555', fontSize: 14 }}>
-                  {j.location || 'Location N/A'} {j.remote ? '(Remote)' : ''}
-                </div>
-                <a href={j.url} target="_blank" rel="noreferrer" style={{ color: '#2563eb', textDecoration: 'none' }}>
-                  Apply ↗
-                </a>
-                <div style={{ color: '#888', fontSize: 12, marginTop: 6 }}>
-                  Posted: {j.posted_at_iso || 'N/A'} • Scraped: {j.scraped_at_iso}
-                </div>
-              </li>
-            ))}
-          </ul>
+        {error && (
+          <p style={{ color: 'crimson' }}>
+            Error loading jobs: {error}
+          </p>
         )}
+
+        {!error && jobs.length === 0 && (
+          <p>No jobs yet. Run the cron endpoints to fetch postings.</p>
+        )}
+
+        <ul style={{ listStyle: 'none', padding: 0 }}>
+          {jobs.map((j) => (
+            <li
+              key={j.fingerprint}
+              style={{
+                border: '1px solid #e5e7eb',
+                borderRadius: 12,
+                padding: 16,
+                marginBottom: 12,
+              }}
+            >
+              <a href={j.url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+                <h3 style={{ margin: '0 0 6px' }}>
+                  {j.title} — {j.company}
+                </h3>
+              </a>
+              <div style={{ color: '#6b7280' }}>
+                {j.location ?? 'Location n/a'} {j.remote ? '· Remote' : ''}
+              </div>
+              {j.posted_at && (
+                <div style={{ color: '#6b7280', fontSize: 14, marginTop: 6 }}>
+                  Posted: {new Date(j.posted_at).toLocaleDateString()}
+                </div>
+              )}
+              {j.description && (
+                <p style={{ marginTop: 8 }}>
+                  {j.description.slice(0, 240)}
+                  {j.description.length > 240 ? '…' : ''}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
       </main>
     </>
   );
