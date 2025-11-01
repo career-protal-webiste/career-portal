@@ -2,13 +2,48 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getCronStatus } from '../../../lib/heartbeat';
 
+// Fallback-safe integer parser
 function toInt(v: any, def = 120) {
   const n = parseInt(String(v ?? ''), 10);
   return Number.isFinite(n) && n > 0 ? n : def;
 }
 
+type RawStatusRow = {
+  source: string;
+  last_run_at: string | Date | null;
+  fetched: number | null;
+  inserted: number | null;
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const threshold = toInt((req.query as any)?.threshold_min, 120);
-  const data = await getCronStatus(threshold);
-  res.status(200).json(data);
+  try {
+    const threshold = toInt((req.query as any)?.threshold_min, 120); // minutes
+
+    // ✅ getCronStatus currently expects NO arguments
+    const rows = (await getCronStatus()) as RawStatusRow[];
+
+    const now = Date.now();
+
+    const enriched = rows.map((r) => {
+      const ts = r.last_run_at ? new Date(r.last_run_at).getTime() : null;
+      const ageMin =
+        ts && Number.isFinite(ts) ? Math.max(0, Math.round((now - ts) / 60000)) : null;
+
+      const late = ageMin == null ? true : ageMin > threshold;
+
+      return {
+        source: r.source,
+        last_run_at: r.last_run_at,
+        fetched: r.fetched ?? 0,
+        inserted: r.inserted ?? 0,
+        age_min: ageMin,
+        late,                // true if last run is older than threshold_min
+        threshold_min: threshold,
+      };
+    });
+
+    res.status(200).json({ ok: true, results: enriched });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || 'server error' });
+  }
 }
