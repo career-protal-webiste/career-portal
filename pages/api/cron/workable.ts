@@ -5,88 +5,68 @@ import { recordCronHeartbeat } from '../../../lib/heartbeat';
 import { roleMatchesWide } from '../../../lib/filters';
 import { listSourcesByType } from '../../../lib/sources';
 
-// Fallback Workable subdomains
-const FALLBACK = [
-  { company: 'Typeform', token: 'typeform' },
-  { company: 'Hotjar', token: 'hotjar' },
-  { company: 'Grammarly', token: 'grammarly' },
-  { company: 'Monday', token: 'monday' },
-  { company: 'Babbel', token: 'babbel' },
-  { company: 'Camunda', token: 'camunda' },
-  { company: 'Bitpanda', token: 'bitpanda' },
-  { company: 'Unity', token: 'unity' },
-  { company: 'Aircall', token: 'aircall' },
-  { company: 'Preply', token: 'preply' },
-  { company: 'Klarna', token: 'klarna' },
-  { company: 'Snyk', token: 'snyk' }
-];
-
-type WorkableJob = {
+type WBJob = {
+  id?: string;
   title?: string;
-  application_url?: string;
-  url?: string;
-  location?: string;
-  updated_at?: string;
-  published_at?: string;
-  state?: string;
+  department?: string | null;
+  url?: string;                 // absolute
+  short_url?: string;           // relative
+  employment_type?: string | null;
+  created_at?: string;          // ISO
+  updated_at?: string;          // ISO
+  location?: { city?: string; region?: string; country?: string };
 };
-type WorkableResp = { jobs?: WorkableJob[] };
 
-function isTrue(v: any) {
-  const s = String(v ?? '').toLowerCase();
-  return s === '1' || s === 'true' || s === 'yes';
-}
+const isTrue = (v:any)=> String(v ?? '').match(/^(1|true|yes)$/i) !== null;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
   const incomingKey = (req.headers['x-cron-key'] as string) || (req.query?.key as string) || '';
   if (!isVercelCron && process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
-    return res.status(401).json({ ok: false, error: 'unauthorized' });
+    return res.status(401).json({ ok:false, error:'unauthorized' });
   }
-
-  const debug = isTrue((req.query as any)?.debug);
   const FILTERED = isTrue((req.query as any)?.filtered);
+  const debug    = isTrue((req.query as any)?.debug);
 
-  const dbSubs = await listSourcesByType('workable');
-  const SUBS = (dbSubs.length ? dbSubs : FALLBACK).map(b => ({ company: b.company_name, token: b.token }));
+  const rows = await listSourcesByType('workable');
+  const SUBS = rows.map(r => ({ company: r.company_name, token: r.token }));
 
-  let fetched = 0;
-  let inserted = 0;
+  let fetched=0, inserted=0;
 
   for (const s of SUBS) {
     try {
-      const url = `https://apply.workable.com/api/v1/widget/accounts/${encodeURIComponent(s.token)}`;
-      const resp = await fetch(url, { headers: { accept: 'application/json' } });
-      if (!resp.ok) continue;
+      // Public widget endpoint
+      const url = `https://apply.workable.com/api/v1/widget/jobs?company=${encodeURIComponent(s.token)}&limit=1000`;
+      const r = await fetch(url, { headers: { accept:'application/json' } });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const arr: WBJob[] = Array.isArray(j?.jobs) ? j.jobs : [];
 
-      const data = (await resp.json()) as WorkableResp;
-      const jobs = Array.isArray(data?.jobs) ? data.jobs : [];
-
-      for (const j of jobs) {
+      for (const p of arr) {
         fetched++;
-        if (j.state && j.state !== 'published') continue;
-
-        const title = (j.title || '').trim();
-        const location = j.location || null;
-        const jobUrl = j.url || j.application_url || '';
-        if (!title || !jobUrl) continue;
+        const title = (p.title || '').trim();
+        const dep = p.department || null;
+        const locParts = [p.location?.city, p.location?.region, p.location?.country].filter(Boolean);
+        const location = locParts.length ? locParts.join(', ') : null;
+        const url = p.url || (p.short_url ? `https://apply.workable.com${p.short_url}` : '');
+        if (!title || !url) continue;
         if (FILTERED && !roleMatchesWide(title)) continue;
 
-        const fingerprint = createFingerprint(s.token, title, location ?? undefined, jobUrl);
+        const fingerprint = createFingerprint(s.token, title, location ?? undefined, url);
 
         await upsertJob({
           fingerprint,
           source: 'workable',
-          source_id: null,
+          source_id: p.id || null,
           company: s.company,
           title,
           location,
           remote: /remote/i.test(`${title} ${String(location)}`),
-          employment_type: null,
+          employment_type: p.employment_type || null,
           experience_hint: inferExperience(title, undefined),
-          category: normalize(null),
-          url: jobUrl,
-          posted_at: j.updated_at || j.published_at || null,
+          category: normalize(dep),
+          url,
+          posted_at: p.updated_at || p.created_at || null,
           scraped_at: new Date().toISOString(),
           description: null,
           salary_min: null,
@@ -94,11 +74,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           currency: null,
           visa_tags: null,
         });
-
         inserted++;
       }
-    } catch (err) {
-      console.error(`Workable failed: ${s.token}`, err);
+    } catch (e) {
+      console.error('workable failed', s.token, e);
     }
   }
 
