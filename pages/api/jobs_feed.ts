@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { sql } from '@vercel/postgres';
 import { patternsForRolesCsv } from '../../lib/filters';
 
-type Row = {
+type JobRow = {
   company: string;
   title: string;
   source: string;
@@ -21,56 +21,66 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const q = (req.query.q as string) || '';
     const usOnly = String(req.query.usOnly || '0') === '1';
     const maxAgeDays = Math.max(1, parseInt((req.query.maxAgeDays as string) || '60', 10));
-    const rolesCsv = (req.query.roles as string) || ''; // e.g., software,data_engineer
+    const rolesCsv = (req.query.roles as string) || ''; // e.g. software,data_engineer
 
     const rolePatterns = patternsForRolesCsv(rolesCsv);
 
-    // --- WHERE assembly ---
-    const whereParts: any[] = [];
+    // ----- dynamic WHERE builder -----
+    const whereConds: string[] = [];
     const args: any[] = [];
+    const p = (val: any) => {
+      args.push(val);
+      return `$${args.length}`;
+    };
 
     // freshness
-    whereParts.push(`COALESCE(posted_at, scraped_at) >= NOW() - INTERVAL '${maxAgeDays} days'`);
+    whereConds.push(`COALESCE(posted_at, scraped_at) >= NOW() - INTERVAL '${maxAgeDays} days'`);
 
     // q search
     if (q) {
-      args.push(`%${q}%`, `%${q}%`, `%${q}%`);
-      whereParts.push(`(title ILIKE $${args.length-2} OR company ILIKE $${args.length-1} OR COALESCE(location,'') ILIKE $${args.length})`);
+      const t = p(`%${q}%`);
+      const c = p(`%${q}%`);
+      const l = p(`%${q}%`);
+      whereConds.push(`(title ILIKE ${t} OR company ILIKE ${c} OR COALESCE(location,'') ILIKE ${l})`);
     }
 
-    // US only heuristic
+    // US only (heuristic)
     if (usOnly) {
-      // cheap heuristic that catches "United States", "US", state abbreviations, or typical city, ST
-      args.push('%United States%', '% USA%', '% US%', '%, AL%', '%, AK%', '%, AZ%', '%, AR%', '%, CA%', '%, CO%', '%, CT%', '%, DC%', '%, DE%', '%, FL%', '%, GA%', '%, HI%', '%, IA%', '%, ID%', '%, IL%', '%, IN%', '%, KS%', '%, KY%', '%, LA%', '%, MA%', '%, MD%', '%, ME%', '%, MI%', '%, MN%', '%, MO%', '%, MS%', '%, MT%', '%, NC%', '%, ND%', '%, NE%', '%, NH%', '%, NJ%', '%, NM%', '%, NV%', '%, NY%', '%, OH%', '%, OK%', '%, OR%', '%, PA%', '%, RI%', '%, SC%', '%, SD%', '%, TN%', '%, TX%', '%, UT%', '%, VA%', '%, VT%', '%, WA%', '%, WI%', '%, WV%', '%Remote - US%', '%US-Remote%');
-      const base = args.length - 52; // number added above
-      const locConds = [];
-      for (let i = 0; i < 52; i++) locConds.push(`COALESCE(location,'') ILIKE $${base + i + 1}`);
-      whereParts.push(`(${locConds.join(' OR ')})`);
-    }
-
-    // role patterns OR over title
-    if (rolePatterns.length) {
-      const start = args.length;
-      rolePatterns.forEach(p => args.push(p));
-      const conds = [];
-      for (let i = 0; i < rolePatterns.length; i++) {
-        conds.push(`title ILIKE $${start + i + 1}`);
+      const patterns = [
+        '%United States%', '%USA%', '% US%', 'US-Remote', 'Remote - US',
+        // a few common state abbreviations / formats
+        '%, CA%', '%, NY%', '%, TX%', '%, WA%', '%, MA%', '%, IL%', '%, NJ%', '%, PA%', '%, FL%', '%, GA%'
+      ];
+      const orParts: string[] = [];
+      for (const pat of patterns) {
+        const ph = p(pat);
+        orParts.push(`COALESCE(location,'') ILIKE ${ph}`);
       }
-      whereParts.push(`(${conds.join(' OR ')})`);
+      whereConds.push(`(${orParts.join(' OR ')})`);
     }
 
-    const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+    // role group patterns (OR over title)
+    if (rolePatterns.length) {
+      const ors: string[] = [];
+      for (const pat of rolePatterns) {
+        const ph = p(pat);
+        ors.push(`title ILIKE ${ph}`);
+      }
+      whereConds.push(`(${ors.join(' OR ')})`);
+    }
 
-    // total
+    const whereSql = whereConds.length ? `WHERE ${whereConds.join(' AND ')}` : '';
+
+    // ----- total -----
     const totalQuery = `
       SELECT COUNT(*)::int AS total
       FROM jobs
       ${whereSql}
     `;
-    const totalRows = await sql<{ total: number }>([totalQuery].join(' '), args as any);
+    const totalRows = await sql.query<{ total: number }>(totalQuery, args);
     const total = totalRows.rows[0]?.total ?? 0;
 
-    // list
+    // ----- list -----
     const listQuery = `
       SELECT company, title, source, url, location,
              COALESCE(posted_at, scraped_at) AS when_time
@@ -79,10 +89,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ORDER BY COALESCE(posted_at, scraped_at) DESC
       LIMIT ${pageSize} OFFSET ${offset}
     `;
-    const list = await sql<Row>([listQuery].join(' '), args as any);
+    const list = await sql.query<JobRow>(listQuery, args);
 
     res.status(200).json({
-      page, pageSize,
+      page,
+      pageSize,
       total,
       totalPages: Math.max(1, Math.ceil(total / pageSize)),
       maxAgeDays,
