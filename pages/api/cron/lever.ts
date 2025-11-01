@@ -5,44 +5,20 @@ import { recordCronHeartbeat } from '../../../lib/heartbeat';
 import { roleMatchesWide } from '../../../lib/filters';
 import { listSourcesByType } from '../../../lib/sources';
 
-// Fallback Lever tenants (skips non-existing slugs safely)
-const FALLBACK = [
-  { company: 'Databricks', token: 'databricks' },
-  { company: 'Scale AI', token: 'scaleai' },
-  { company: 'Ramp', token: 'ramp' },
-  { company: 'Mercury', token: 'mercury' },
-  { company: 'Brex', token: 'brex' },
-  { company: 'Samsara', token: 'samsara' },
-  { company: 'Airtable', token: 'airtable' },
-  { company: 'Figma', token: 'figma' },
-  { company: 'Mixpanel', token: 'mixpanel' },
-  { company: 'PostHog', token: 'posthog' },
-  { company: 'Pilot', token: 'pilot' },
-  { company: 'Mux', token: 'mux' },
-  { company: 'Retool', token: 'retool' },
-  { company: 'Sourcegraph', token: 'sourcegraph' },
-  { company: 'OpenPhone', token: 'openphone' },
-  { company: 'Linear', token: 'linear' },
-  { company: 'Hex', token: 'hex' },
-  { company: 'Vercel', token: 'vercel' },
-  { company: 'Quora', token: 'quora' },
-  { company: 'Replit', token: 'replit' },
-  { company: 'Stripe', token: 'stripe' }
-];
-
 type LeverJob = {
   id?: string;
-  text?: string; // title
+  text?: string;                 // title
   hostedUrl?: string;
-  createdAt?: number; // ms
-  categories?: { location?: string; team?: string; commitment?: string };
-  workplaceType?: string;
+  categories?: {
+    location?: string;
+    team?: string;
+    commitment?: string;
+  };
+  createdAt?: number;            // ms
+  updatedAt?: number;            // ms
 };
 
-function isTrue(v: any) {
-  const s = String(v ?? '').toLowerCase();
-  return s === '1' || s === 'true' || s === 'yes';
-}
+const isTrue = (v: any) => String(v ?? '').match(/^(1|true|yes)$/i) !== null;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
@@ -51,32 +27,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
 
-  const debug = isTrue((req.query as any)?.debug);
   const FILTERED = isTrue((req.query as any)?.filtered);
+  const debug    = isTrue((req.query as any)?.debug);
 
-  const dbTenants = await listSourcesByType('lever');
-  const TENANTS = (dbTenants.length ? dbTenants : FALLBACK).map(b => ({ company: b.company_name, token: b.token }));
-
-  let fetched = 0;
-  let inserted = 0;
+  const rows = await listSourcesByType('lever');
+  const TENANTS = rows.map(r => ({ company: r.company_name, token: r.token }));
+  let fetched = 0, inserted = 0;
 
   for (const t of TENANTS) {
     try {
       const url = `https://api.lever.co/v0/postings/${encodeURIComponent(t.token)}?mode=json`;
-      const resp = await fetch(url, { headers: { accept: 'application/json' } });
-      if (!resp.ok) continue;
+      const r = await fetch(url, { headers: { accept: 'application/json' } });
+      if (!r.ok) continue;
+      const arr: LeverJob[] = await r.json();
+      if (!Array.isArray(arr) || arr.length === 0) continue;
 
-      const jobs = (await resp.json()) as LeverJob[];
-      for (const j of jobs) {
+      for (const j of arr) {
         fetched++;
-
         const title = (j.text || '').trim();
-        const loc = j.categories?.location || null;
-        const jobUrl = j.hostedUrl || (j.id ? `https://jobs.lever.co/${t.token}/${j.id}` : '');
-        if (!title || !jobUrl) continue;
+        const location = j.categories?.location || null;
+        const url = j.hostedUrl || '';
+        if (!title || !url) continue;
         if (FILTERED && !roleMatchesWide(title)) continue;
 
-        const fingerprint = createFingerprint(t.token, title, loc ?? undefined, jobUrl);
+        const fingerprint = createFingerprint(t.token, title, location ?? undefined, url);
 
         await upsertJob({
           fingerprint,
@@ -84,13 +58,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           source_id: j.id || null,
           company: t.company,
           title,
-          location: loc,
-          remote: (j.workplaceType === 'remote') || /remote/i.test(`${title} ${String(loc)}`),
+          location,
+          remote: /remote/i.test(`${title} ${String(location)}`),
           employment_type: j.categories?.commitment || null,
           experience_hint: inferExperience(title, undefined),
           category: normalize(j.categories?.team || null),
-          url: jobUrl,
-          posted_at: j.createdAt ? new Date(j.createdAt).toISOString() : null,
+          url,
+          posted_at: (j.updatedAt || j.createdAt) ? new Date((j.updatedAt || j.createdAt)!).toISOString() : null,
           scraped_at: new Date().toISOString(),
           description: null,
           salary_min: null,
@@ -98,11 +72,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           currency: null,
           visa_tags: null,
         });
-
         inserted++;
       }
-    } catch (err) {
-      console.error(`Lever failed: ${t.token}`, err);
+    } catch (e) {
+      console.error('lever failed', t.token, e);
     }
   }
 
