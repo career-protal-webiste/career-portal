@@ -17,7 +17,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const maxAgeDays = Math.max(1, toInt((req.query as any).maxAgeDays, 14));
   const usOnly     = toBool((req.query as any).usOnly);
   const q          = ((req.query as any).q ?? '').toString().trim();
-  const roles      = ((req.query as any).roles ?? '').toString().trim(); // "popular" or empty
+  const roles      = ((req.query as any).roles ?? '').toString().trim(); // "popular" or ""
 
   // Popular STEM roles (India → USA focus)
   const POPULAR = [
@@ -41,25 +41,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const offset = (page - 1) * pageSize;
 
-  // Build WHERE pieces
+  // Build WHERE with parameter array
   const clauses: string[] = [];
   const params: any[] = [];
-  // Time window
+
+  // Recency window
   params.push(maxAgeDays);
   clauses.push(`COALESCE(posted_at, scraped_at) >= NOW() - ($${params.length} || ' days')::interval`);
-  // US only (best-effort via location string)
+
+  // US-only heuristic
   if (usOnly) {
     clauses.push(`(location ILIKE '%United States%' OR location ILIKE '%, US%' OR location ILIKE '%, USA%' OR location ILIKE '%, United States%')`);
   }
-  // Free text
+
+  // Free-text
   if (q) {
     params.push(`%${q}%`);
     clauses.push(`(title ILIKE $${params.length} OR company ILIKE $${params.length})`);
   }
-  // Popular roles
+
+  // Popular roles filter
   if (roles === 'popular') {
-    const likeParts = POPULAR.map((k, i) => `title ILIKE $${params.length + i + 1}`);
-    for (const k of POPULAR) params.push(`%${k}%`);
+    const likeParts: string[] = [];
+    for (const k of POPULAR) {
+      params.push(`%${k}%`);
+      likeParts.push(`title ILIKE $${params.length}`);
+    }
     clauses.push(`(${likeParts.join(' OR ')})`);
   }
 
@@ -74,11 +81,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
      ORDER BY COALESCE(posted_at, scraped_at) DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
 
-  const totalRow = await sql.unsafe(countSql, params);
+  // Execute with sql.query(text, values)
+  const totalRow = await sql.query(countSql, params);
   const total = totalRow.rows[0]?.total ?? 0;
 
   const listParams = [...params, pageSize, offset];
-  const rows = await sql.unsafe(listSql, listParams);
+  const rows = await sql.query(listSql, listParams);
 
   res.status(200).json({
     page,
