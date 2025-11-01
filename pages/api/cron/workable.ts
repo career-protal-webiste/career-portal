@@ -1,9 +1,24 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { upsertJob } from '../../../lib/db';
-import { createFingerprint, roleMatches, inferExperience, normalize } from '../../../lib/jobs';
+import { createFingerprint, inferExperience, normalize } from '../../../lib/jobs';
+import { recordCronHeartbeat } from '../../../lib/heartbeat';
+import { roleMatchesWide } from '../../../lib/filters';
+import { listSourcesByType } from '../../../lib/sources';
 
-const SUBDOMAINS = [
-  'typeform','hotjar','grammarly','deliveroo','udemy','monday','babbel','camunda','bitpanda','unity'
+// Fallback Workable subdomains
+const FALLBACK = [
+  { company: 'Typeform', token: 'typeform' },
+  { company: 'Hotjar', token: 'hotjar' },
+  { company: 'Grammarly', token: 'grammarly' },
+  { company: 'Monday', token: 'monday' },
+  { company: 'Babbel', token: 'babbel' },
+  { company: 'Camunda', token: 'camunda' },
+  { company: 'Bitpanda', token: 'bitpanda' },
+  { company: 'Unity', token: 'unity' },
+  { company: 'Aircall', token: 'aircall' },
+  { company: 'Preply', token: 'preply' },
+  { company: 'Klarna', token: 'klarna' },
+  { company: 'Snyk', token: 'snyk' }
 ];
 
 type WorkableJob = {
@@ -20,23 +35,25 @@ type WorkableResp = { jobs?: WorkableJob[] };
 const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const incomingKey =
-    (req.headers['x-cron-key'] as string) ||
-    (req.query?.key as string) ||
-    '';
-  if (process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
+  const isVercelCron = !!req.headers['x-vercel-cron'];
+  const incomingKey = (req.headers['x-cron-key'] as string) || (req.query?.key as string) || '';
+  if (!isVercelCron && process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
 
   const allowAll = 'all' in (req.query || {});
   const debug = isTrue((req.query as any)?.debug);
 
+  // DB-backed subs, fallback if empty
+  const dbSubs = await listSourcesByType('workable');
+  const SUBS = (dbSubs.length ? dbSubs : FALLBACK).map(b => ({ company: b.company_name, token: b.token }));
+
   let fetched = 0;
   let inserted = 0;
 
-  for (const sub of SUBDOMAINS) {
+  for (const s of SUBS) {
     try {
-      const url = `https://apply.workable.com/api/v1/widget/accounts/${encodeURIComponent(sub)}`;
+      const url = `https://apply.workable.com/api/v1/widget/accounts/${encodeURIComponent(s.token)}`;
       const resp = await fetch(url, { headers: { accept: 'application/json' } });
       if (!resp.ok) continue;
 
@@ -51,18 +68,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const location = j.location || null;
         const jobUrl = j.url || j.application_url || '';
         if (!title || !jobUrl) continue;
-        if (!allowAll && !roleMatches(title, undefined)) continue;
+        if (!allowAll && !roleMatchesWide(title)) continue;
 
-        const fingerprint = createFingerprint(sub, title, location ?? undefined, jobUrl);
+        const fingerprint = createFingerprint(s.token, title, location ?? undefined, jobUrl);
 
         await upsertJob({
           fingerprint,
           source: 'workable',
           source_id: null,
-          company: sub,
+          company: s.company,
           title,
           location,
-          remote: /remote/i.test(String(location)) || /remote/i.test(title),
+          remote: /remote/i.test(`${title} ${String(location)}`),
           employment_type: null,
           experience_hint: inferExperience(title, undefined),
           category: normalize(null),
@@ -79,10 +96,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         inserted++;
       }
     } catch (err) {
-      console.error(`Workable failed: ${sub}`, err);
+      console.error(`Workable failed: ${s.token}`, err);
     }
   }
 
   if (debug) console.log(`[CRON] workable fetched=${fetched} inserted=${inserted}`);
-  return res.status(200).json({ fetched, inserted });
+  await recordCronHeartbeat('workable', fetched, inserted);
+  return res.status(200).json({ fetched, inserted, subs: SUBS.length });
 }
