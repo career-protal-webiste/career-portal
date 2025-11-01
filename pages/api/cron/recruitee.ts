@@ -1,9 +1,22 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { upsertJob } from '../../../lib/db';
-import { createFingerprint, roleMatches, inferExperience, normalize } from '../../../lib/jobs';
+import { createFingerprint, inferExperience, normalize } from '../../../lib/jobs';
+import { recordCronHeartbeat } from '../../../lib/heartbeat';
+import { roleMatchesWide } from '../../../lib/filters';
+import { listSourcesByType } from '../../../lib/sources';
 
-const SUBDOMAINS = [
-  'mollie','bunq','messagebird','celonis','klarna','backbase','getyourguide','wefox','treatwell','cm.com'
+// Fallback Recruitee subdomains
+const FALLBACK = [
+  { company: 'Mollie', token: 'mollie' },
+  { company: 'Bunq', token: 'bunq' },
+  { company: 'MessageBird', token: 'messagebird' },
+  { company: 'Celonis', token: 'celonis' },
+  { company: 'Klarna', token: 'klarna' },
+  { company: 'Backbase', token: 'backbase' },
+  { company: 'GetYourGuide', token: 'getyourguide' },
+  { company: 'Wefox', token: 'wefox' },
+  { company: 'Treatwell', token: 'treatwell' },
+  { company: 'CM.com', token: 'cm.com' }
 ];
 
 type Offer = {
@@ -27,23 +40,25 @@ function buildUrl(sub: string, slug?: string, fallback?: string) {
 const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const incomingKey =
-    (req.headers['x-cron-key'] as string) ||
-    (req.query?.key as string) ||
-    '';
-  if (process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
+  const isVercelCron = !!req.headers['x-vercel-cron'];
+  const incomingKey = (req.headers['x-cron-key'] as string) || (req.query?.key as string) || '';
+  if (!isVercelCron && process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
 
   const allowAll = 'all' in (req.query || {});
   const debug = isTrue((req.query as any)?.debug);
 
+  // DB-backed subs, fallback if empty
+  const dbSubs = await listSourcesByType('recruitee');
+  const SUBS = (dbSubs.length ? dbSubs : FALLBACK).map(b => ({ company: b.company_name, token: b.token }));
+
   let fetched = 0;
   let inserted = 0;
 
-  for (const sub of SUBDOMAINS) {
+  for (const s of SUBS) {
     try {
-      const url = `https://${encodeURIComponent(sub)}.recruitee.com/api/offers/`;
+      const url = `https://${encodeURIComponent(s.token)}.recruitee.com/api/offers/`;
       const resp = await fetch(url, { headers: { accept: 'application/json' } });
       if (!resp.ok) continue;
 
@@ -58,20 +73,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const city = o.location?.city || o.city || '';
         const country = o.location?.country || o.country || '';
         const location = [city, country].filter(Boolean).join(', ') || null;
-        const jobUrl = buildUrl(sub, o.slug, o.url);
+        const jobUrl = buildUrl(s.token, o.slug, o.url);
         if (!title || !jobUrl) continue;
-        if (!allowAll && !roleMatches(title, undefined)) continue;
+        if (!allowAll && !roleMatchesWide(title)) continue;
 
-        const fingerprint = createFingerprint(sub, title, location ?? undefined, jobUrl);
+        const fingerprint = createFingerprint(s.token, title, location ?? undefined, jobUrl);
 
         await upsertJob({
           fingerprint,
           source: 'recruitee',
           source_id: o.slug || null,
-          company: sub,
+          company: s.company,
           title,
           location,
-          remote: /remote/i.test(String(location)) || /remote/i.test(title),
+          remote: /remote/i.test(`${title} ${String(location)}`),
           employment_type: null,
           experience_hint: inferExperience(title, undefined),
           category: normalize(null),
@@ -88,10 +103,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         inserted++;
       }
     } catch (err) {
-      console.error(`Recruitee failed: ${sub}`, err);
+      console.error(`Recruitee failed: ${s.token}`, err);
     }
   }
 
   if (debug) console.log(`[CRON] recruitee fetched=${fetched} inserted=${inserted}`);
-  return res.status(200).json({ fetched, inserted });
+  await recordCronHeartbeat('recruitee', fetched, inserted);
+  return res.status(200).json({ fetched, inserted, subs: SUBS.length });
 }
