@@ -1,6 +1,6 @@
 // pages/api/health.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { sql } from '@vercel/postgres';
+import { sql } from '../../lib/db';
 
 export default async function handler(_req: NextApiRequest, res: NextApiResponse) {
   try {
