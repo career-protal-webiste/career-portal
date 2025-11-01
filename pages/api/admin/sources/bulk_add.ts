@@ -16,6 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let items: any = req.body;
     if (typeof items === 'string') items = JSON.parse(items);
     if (items && !Array.isArray(items) && Array.isArray(items.items)) items = items.items;
+
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ ok: false, error: 'Body must be a non-empty JSON array' });
     }
