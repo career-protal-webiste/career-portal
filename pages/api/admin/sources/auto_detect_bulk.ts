@@ -1,114 +1,117 @@
 // pages/api/admin/sources/auto_detect_bulk.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { addSource, ATSType } from '../../../../lib/sources';
 
-// ⬇️ Keep these import paths the same as in your project.
-// If your repo uses different paths, just swap them to your originals.
-import { detect } from '@/lib/ats/detect';          // returns { type, token } for a given URL
-import { addSource } from '@/lib/db/sources';       // inserts/updates a single ATS source { type, token, company_name }
+export const config = { api: { bodyParser: { sizeLimit: '1mb' } } };
 
-// ---------- Types ----------
-type InRow = {
-  url: string;
-  company_name?: string;
-};
-
-type OkResult = {
-  url: string;
-  company_name: string;
-  ok: true;
-  type: string;
-  token: string;
-};
-
-type ErrResult = {
-  url: string;
-  company_name: string;
-  ok: false;
-  error: string;
-};
-
-type OutResult = OkResult | ErrResult;
-
-// ---------- Helpers ----------
-function inferCompanyName(u: string): string {
+// Detect the ATS type + token from a given company board URL
+function detect(urlStr: string): { type: ATSType | null; token: string | null } {
   try {
-    const host = new URL(u).hostname.replace(/^www\./, '');
-    // take the first label (e.g. "stripe" from "stripe.com")
-    return host.split('.')[0] || host;
-  } catch {
-    return 'Unknown';
-  }
-}
+    const u = new URL(urlStr);
+    const host = u.hostname.toLowerCase(); // <- hostname (no port)
+    const path = u.pathname;
 
-function normalizeBody(body: unknown): InRow[] {
-  if (Array.isArray(body)) return body as InRow[];
-  if (typeof body === 'object' && body !== null) return [body as InRow];
-  // handle raw JSON string bodies if any
-  if (typeof body === 'string') {
-    try {
-      const parsed = JSON.parse(body);
-      return normalizeBody(parsed);
-    } catch {
-      return [];
+    // Greenhouse: https://boards.greenhouse.io/<token>
+    if (host.includes('boards.greenhouse.io')) {
+      return { type: 'greenhouse', token: path.split('/').filter(Boolean)[0] || null };
     }
+
+    // Lever: https://jobs.lever.co/<token>
+    if (host.includes('jobs.lever.co')) {
+      return { type: 'lever', token: path.split('/').filter(Boolean)[0] || null };
+    }
+
+    // Ashby: https://<token>.ashbyhq.com or https://jobs.ashbyhq.com/job-board/<token>
+    if (host.includes('ashbyhq.com')) {
+      const parts = path.split('/').filter(Boolean);
+      const first = parts[0];
+      const tok = first && first.toLowerCase() === 'job-board' ? parts[1] : first;
+      return { type: 'ashby', token: tok ? decodeURIComponent(tok) : null };
+    }
+
+    // Workable: https://apply.workable.com/<token>
+    if (host.includes('apply.workable.com')) {
+      return { type: 'workable', token: path.split('/').filter(Boolean)[0] || null };
+    }
+
+    // Recruitee: https://<token>.recruitee.com
+    if (host.endsWith('.recruitee.com')) {
+      return { type: 'recruitee', token: host.replace('.recruitee.com', '') || null };
+    }
+
+    // SmartRecruiters: https://jobs.smartrecruiters.com/<token>/...
+    if (host.includes('smartrecruiters.com')) {
+      const seg = path.split('/').filter(Boolean)[0];
+      return { type: 'smartrecruiters', token: seg || null };
+    }
+
+    // Workday (composite token host:tenant:site)
+    // Examples: https://company.wd1.myworkdayjobs.com/en-US/External
+    if (host.includes('myworkdayjobs.com')) {
+      const segs = path.split('/').filter(Boolean);
+      const site = segs[0] || 'External';
+      const tenant = host.split('.')[0]; // "company" from company.wd1.myworkdayjobs.com
+      return { type: 'workday', token: `${host}:${tenant}:${site}` };
+    }
+  } catch {
+    // fallthrough
   }
-  return [];
+  return { type: null, token: null };
 }
 
-// ---------- Handler ----------
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Optional admin key (keeps existing pattern)
+  const key = (req.headers['x-admin-key'] as string) || (req.query.key as string) || '';
+  if (process.env.ADMIN_KEY && key !== process.env.ADMIN_KEY) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
-    return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
+    return res.status(405).json({ ok: false, error: 'POST only' });
   }
 
-  // Optional simple admin key gate (keeps your existing pattern; safe if not set)
-  const ADMIN_KEY = process.env.ADMIN_KEY || process.env.CRON_SECRET || '';
-  const providedKey = String(req.query.key ?? req.headers['x-admin-key'] ?? '');
-  if (ADMIN_KEY && providedKey !== ADMIN_KEY) {
-    return res.status(401).json({ ok: false, error: 'Unauthorized: bad or missing key' });
-  }
+  try {
+    // Accept array body
+    const items: Array<{ url: string; company_name: string }> =
+      typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
 
-  const rows = normalizeBody(req.body);
-  if (!rows.length) {
-    return res.status(400).json({ ok: false, error: 'Body must be a JSON array or object with { url, company_name? }' });
-  }
-
-  const out: OutResult[] = [];
-
-  for (const row of rows) {
-    const url = String(row?.url ?? '').trim();
-    const company_name = (row?.company_name ?? inferCompanyName(url)).trim();
-
-    if (!url) {
-      out.push({ url: '', company_name: company_name || 'Unknown', ok: false, error: 'missing url' });
-      continue;
+    if (!Array.isArray(items)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Body must be an array of { url, company_name }' });
     }
 
-    try {
-      const { type, token } = detect(url);
+    const out: Array<
+      | { url: string; company_name: string; ok: true; type: ATSType; token: string }
+      | { url: string; company_name: string; ok: false; error: string }
+    > = [];
 
+    for (const it of items) {
+      const url = String(it?.url || '').trim();
+      const company_name = String(it?.company_name || '').trim();
+
+      if (!url || !company_name) {
+        out.push({ url, company_name, ok: false, error: 'missing fields' });
+        continue;
+      }
+
+      const { type, token } = detect(url);
       if (!type || !token) {
         out.push({ url, company_name, ok: false, error: 'not detected' });
         continue;
       }
 
-      // 🚫 OLD (caused TS error):
-      // await addSource({ type, token, company_name, active: true });
-
-      // ✅ NEW: match the expected type { type, token, company_name }
+      // ✅ FIX: remove the invalid `active: true` property
       await addSource({ type, token, company_name });
 
-      out.push({ url, company_name, ok: true, type: String(type), token });
-    } catch (e: any) {
-      out.push({
-        url,
-        company_name,
-        ok: false,
-        error: e?.message || 'unknown error'
-      });
+      out.push({ url, company_name, ok: true, type, token });
     }
-  }
 
-  return res.status(200).json({ ok: true, results: out });
+    return res.status(200).json({ ok: true, results: out });
+  } catch (e: any) {
+    return res
+      .status(500)
+      .json({ ok: false, error: e?.message || 'server error' });
+  }
 }
