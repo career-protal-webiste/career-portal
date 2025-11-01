@@ -1,8 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { upsertJob } from '../../../lib/db';
-import { createFingerprint, roleMatches, inferExperience, normalize } from '../../../lib/jobs';
+import { createFingerprint, inferExperience, normalize } from '../../../lib/jobs';
+import { recordCronHeartbeat } from '../../../lib/heartbeat';
+import { roleMatchesWide } from '../../../lib/filters';
+import { listSourcesByType } from '../../../lib/sources';
 
-const BOARDS: { company: string; token: string }[] = [
+// Fallback seeds if DB is empty
+const FALLBACK: { company: string; token: string }[] = [
   { company: 'Stripe', token: 'stripe' },
   { company: 'Databricks', token: 'databricks' },
   { company: 'Snowflake', token: 'snowflakeinc' },
@@ -12,7 +16,13 @@ const BOARDS: { company: string; token: string }[] = [
   { company: 'Plaid', token: 'plaid' },
   { company: 'Cloudflare', token: 'cloudflare' },
   { company: 'Box', token: 'box' },
-  { company: 'Atlassian', token: 'atlassian' }
+  { company: 'Atlassian', token: 'atlassian' },
+  { company: 'Airbnb', token: 'airbnb' },
+  { company: 'Shopify', token: 'shopify' },
+  { company: 'Robinhood', token: 'robinhood' },
+  { company: 'Dropbox', token: 'dropbox' },
+  { company: 'Klaviyo', token: 'klaviyo' },
+  { company: 'Datadog', token: 'datadog' }
 ];
 
 type GHJob = {
@@ -27,17 +37,18 @@ type GHJob = {
 const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // 🔐 shared secret (header or ?key=)
-  const incomingKey =
-    (req.headers['x-cron-key'] as string) ||
-    (req.query?.key as string) ||
-    '';
-  if (process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
+  const isVercelCron = !!req.headers['x-vercel-cron'];
+  const incomingKey = (req.headers['x-cron-key'] as string) || (req.query?.key as string) || '';
+  if (!isVercelCron && process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
 
   const allowAll = 'all' in (req.query || {});
   const debug = isTrue((req.query as any)?.debug);
+
+  // DB-backed sources, fallback if empty
+  const dbBoards = await listSourcesByType('greenhouse');
+  const BOARDS = (dbBoards.length ? dbBoards : FALLBACK).map(b => ({ company: b.company_name, token: b.token }));
 
   let fetched = 0;
   let inserted = 0;
@@ -53,12 +64,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       for (const j of jobs) {
         fetched++;
-
         const title = (j.title || '').trim();
         const loc = j.location?.name || null;
         const jobUrl = j.absolute_url || '';
         if (!title || !jobUrl) continue;
-        if (!allowAll && !roleMatches(title, undefined)) continue;
+        if (!allowAll && !roleMatchesWide(title)) continue;
 
         const fingerprint = createFingerprint(b.token, title, loc ?? undefined, jobUrl);
 
@@ -69,7 +79,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           company: b.company,
           title,
           location: loc,
-          remote: /remote/i.test(String(loc)) || /remote/i.test(title),
+          remote: /remote/i.test(`${title} ${String(loc)}`),
           employment_type: null,
           experience_hint: inferExperience(title, undefined),
           category: normalize(j.departments?.[0]?.name || null),
@@ -91,5 +101,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   if (debug) console.log(`[CRON] greenhouse fetched=${fetched} inserted=${inserted}`);
-  return res.status(200).json({ fetched, inserted });
+  await recordCronHeartbeat('greenhouse', fetched, inserted);
+  return res.status(200).json({ fetched, inserted, boards: BOARDS.length });
 }
