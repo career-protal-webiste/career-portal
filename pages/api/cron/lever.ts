@@ -5,7 +5,7 @@ import { recordCronHeartbeat } from '../../../lib/heartbeat';
 import { roleMatchesWide } from '../../../lib/filters';
 import { listSourcesByType } from '../../../lib/sources';
 
-// Fallback Lever tenants (safe to keep; non-existent slugs are skipped)
+// Fallback Lever tenants (skips non-existing slugs safely)
 const FALLBACK = [
   { company: 'Databricks', token: 'databricks' },
   { company: 'Scale AI', token: 'scaleai' },
@@ -39,7 +39,10 @@ type LeverJob = {
   workplaceType?: string;
 };
 
-const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
+function isTrue(v: any) {
+  const s = String(v ?? '').toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes';
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
@@ -48,10 +51,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
 
-  const allowAll = 'all' in (req.query || {});
   const debug = isTrue((req.query as any)?.debug);
+  const FILTERED = isTrue((req.query as any)?.filtered);
 
-  // DB-backed sources, fallback if empty
   const dbTenants = await listSourcesByType('lever');
   const TENANTS = (dbTenants.length ? dbTenants : FALLBACK).map(b => ({ company: b.company_name, token: b.token }));
 
@@ -72,7 +74,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const loc = j.categories?.location || null;
         const jobUrl = j.hostedUrl || (j.id ? `https://jobs.lever.co/${t.token}/${j.id}` : '');
         if (!title || !jobUrl) continue;
-        if (!allowAll && !roleMatchesWide(title)) continue;
+        if (FILTERED && !roleMatchesWide(title)) continue;
 
         const fingerprint = createFingerprint(t.token, title, loc ?? undefined, jobUrl);
 
@@ -104,7 +106,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  if (debug) console.log(`[CRON] lever fetched=${fetched} inserted=${inserted}`);
+  if (debug) console.log(`[CRON] lever fetched=${fetched} inserted=${inserted} filtered=${FILTERED}`);
   await recordCronHeartbeat('lever', fetched, inserted);
-  return res.status(200).json({ fetched, inserted, tenants: TENANTS.length });
+  return res.status(200).json({ fetched, inserted, tenants: TENANTS.length, filtered: FILTERED });
 }
