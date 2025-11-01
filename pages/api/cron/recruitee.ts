@@ -43,7 +43,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       for (const o of offers) {
         if (o.state && o.state !== 'published') continue;
 
-        const title = o.title?.trim() || '';
+        const title = (o.title || '').trim();
         const city = o.location?.city || o.city || '';
         const country = o.location?.country || o.country || '';
         const location = [city, country].filter(Boolean).join(', ') || null;
@@ -63,7 +63,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           location,
           remote: /remote/i.test(String(location)) || /remote/i.test(title),
           employment_type: null,
-          experience_hint: inferExperience(title),
+          // ✅ pass 2nd arg
+          experience_hint: inferExperience(title, undefined),
           category: normalize(null),
           url: jobUrl,
           posted_at: o.updated_at || o.created_at || null,
