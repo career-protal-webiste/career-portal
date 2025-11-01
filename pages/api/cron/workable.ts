@@ -20,8 +20,12 @@ type WorkableJob = {
 
 type WorkableResp = { jobs?: WorkableJob[] };
 
+const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const allowAll = 'all' in (req.query || {}); // /api/cron/workable?all=1 to skip role filtering
+  const allowAll = 'all' in (req.query || {});
+  const debug = isTrue((req.query as any)?.debug);
+  let fetched = 0;
   let inserted = 0;
 
   for (const sub of SUBDOMAINS) {
@@ -34,13 +38,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const jobs = Array.isArray(data?.jobs) ? data.jobs : [];
 
       for (const j of jobs) {
+        fetched++;
+
         if (j.state && j.state !== 'published') continue;
 
         const title = (j.title || '').trim();
         const location = j.location || null;
         const jobUrl = j.url || j.application_url || '';
         if (!title || !jobUrl) continue;
-
         if (!allowAll && !roleMatches(title, undefined)) continue;
 
         const fingerprint = createFingerprint(sub, title, location ?? undefined, jobUrl);
@@ -54,7 +59,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           location,
           remote: /remote/i.test(String(location)) || /remote/i.test(title),
           employment_type: null,
-          // ✅ pass 2nd arg
           experience_hint: inferExperience(title, undefined),
           category: normalize(null),
           url: jobUrl,
@@ -67,12 +71,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           visa_tags: null,
         });
 
-        inserted += 1;
+        inserted++;
       }
     } catch (err) {
       console.error(`Workable subdomain failed: ${sub}`, err);
     }
   }
 
-  res.status(200).json({ inserted });
+  if (debug) console.log(`[CRON] workable fetched=${fetched} inserted=${inserted}`);
+  return res.status(200).json({ fetched, inserted });
 }
