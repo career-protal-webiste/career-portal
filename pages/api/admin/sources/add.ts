@@ -9,7 +9,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'POST only' });
 
   try {
-    const { type, token, company_name } = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) || {};
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const { type, token, company_name } = body || {};
     if (!type || !token || !company_name) return res.status(400).json({ ok: false, error: 'Missing type/token/company_name' });
     await addSource(type as ATSType, String(token), String(company_name));
     res.status(200).json({ ok: true });
