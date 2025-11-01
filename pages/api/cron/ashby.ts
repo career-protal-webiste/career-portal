@@ -6,8 +6,19 @@ import { createFingerprint, roleMatches, inferExperience, normalize } from '../.
 // Ashby job-board names (final path segment from https://jobs.ashbyhq.com/<BoardName>)
 const BOARDS = [
   'Anthropic','Perplexity','Ramp','Mercury','Retool','OpenPhone','Hex','Linear','Tome','dbt Labs','Zip',
-  'Sourcegraph','Vercel','Quora','MosaicML','Replit','Pilot','Mux','PostHog','Mux','OpenAI'
+  'Sourcegraph','Vercel','Quora','Replit','Pilot','Mux','PostHog','OpenAI'
 ];
+
+type AshbyResp = {
+  jobs?: Array<{
+    title?: string;
+    location?: string;
+    isRemote?: boolean;
+    publishedAt?: string;
+    jobUrl?: string;
+    applyUrl?: string;
+  }>;
+};
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const allowAll = 'all' in (req.query || {}); // /api/cron/ashby?all=1 to skip role filtering
@@ -19,19 +30,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const resp = await fetch(url, { headers: { accept: 'application/json' } });
       if (!resp.ok) continue;
 
-      const data = await resp.json();
+      const data = (await resp.json()) as AshbyResp;
       const jobs = Array.isArray(data?.jobs) ? data.jobs : [];
 
       for (const j of jobs) {
-        const title: string = j?.title ?? '';
-        const location: string | null = j?.location ?? null;
-        const url: string = j?.jobUrl || j?.applyUrl || '';
-        if (!title || !url) continue;
+        const title = (j?.title || '').trim();
+        const location = j?.location || null;
+        const jobUrl = j?.jobUrl || j?.applyUrl || '';
+        if (!title || !jobUrl) continue;
 
-        // Basic filtering: keep only relevant roles unless `all=1`
+        // Keep only relevant roles unless ?all=1
         if (!allowAll && !roleMatches(title, undefined)) continue;
 
-        const fingerprint = createFingerprint(board, title, location ?? undefined, url);
+        const fingerprint = createFingerprint(board, title, location ?? undefined, jobUrl);
 
         await upsertJob({
           fingerprint,
@@ -40,11 +51,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           company: board,
           title,
           location,
-          remote: (location || '').toLowerCase().includes('remote') || /remote/i.test(title),
+          remote: (location || '').toLowerCase().includes('remote') || /remote/i.test(title) || !!j?.isRemote,
           employment_type: null,
-          experience_hint: inferExperience(title),
+          // ✅ inferExperience requires 2 args in your repo
+          experience_hint: inferExperience(title, undefined),
           category: normalize(null),
-          url,
+          url: jobUrl,
+          // ✅ fixed the typo here
           posted_at: j?.publishedAt ?? null,
           scraped_at: new Date().toISOString(),
           description: null,
