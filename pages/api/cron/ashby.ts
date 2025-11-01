@@ -1,9 +1,7 @@
-// pages/api/cron/ashby.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { upsertJob } from '../../../lib/db';
 import { createFingerprint, roleMatches, inferExperience, normalize } from '../../../lib/jobs';
 
-// Ashby job-board names (final path segment from https://jobs.ashbyhq.com/<BoardName>)
 const BOARDS = [
   'Anthropic','Perplexity','Ramp','Mercury','Retool','OpenPhone','Hex','Linear','Tome','dbt Labs','Zip',
   'Sourcegraph','Vercel','Quora','Replit','Pilot','Mux','PostHog','OpenAI'
@@ -23,8 +21,17 @@ type AshbyResp = {
 const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const incomingKey =
+    (req.headers['x-cron-key'] as string) ||
+    (req.query?.key as string) ||
+    '';
+  if (process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+
   const allowAll = 'all' in (req.query || {});
   const debug = isTrue((req.query as any)?.debug);
+
   let fetched = 0;
   let inserted = 0;
 
@@ -72,7 +79,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         inserted++;
       }
     } catch (err) {
-      console.error(`Ashby board failed: ${board}`, err);
+      console.error(`Ashby failed: ${board}`, err);
     }
   }
 
