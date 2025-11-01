@@ -1,10 +1,24 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { upsertJob } from '../../../lib/db';
-import { createFingerprint, roleMatches, inferExperience, normalize } from '../../../lib/jobs';
+import { createFingerprint, inferExperience, normalize } from '../../../lib/jobs';
+import { recordCronHeartbeat } from '../../../lib/heartbeat';
+import { roleMatchesWide } from '../../../lib/filters';
+import { listSourcesByType } from '../../../lib/sources';
 
-const BOARDS = [
-  'Anthropic','Perplexity','Ramp','Mercury','Retool','OpenPhone','Hex','Linear','Tome','dbt Labs','Zip',
-  'Sourcegraph','Vercel','Quora','Replit','Pilot','Mux','PostHog','OpenAI'
+// Fallback boards (display name as Ashby board)
+const FALLBACK = [
+  { company: 'Anthropic', token: 'Anthropic' },
+  { company: 'Perplexity', token: 'Perplexity' },
+  { company: 'Ramp', token: 'Ramp' },
+  { company: 'Mercury', token: 'Mercury' },
+  { company: 'Retool', token: 'Retool' },
+  { company: 'Linear', token: 'Linear' },
+  { company: 'dbt Labs', token: 'dbt Labs' },
+  { company: 'Vercel', token: 'Vercel' },
+  { company: 'Quora', token: 'Quora' },
+  { company: 'Replit', token: 'Replit' },
+  { company: 'OpenAI', token: 'OpenAI' },
+  { company: 'Glean', token: 'Glean' }
 ];
 
 type AshbyResp = {
@@ -21,23 +35,25 @@ type AshbyResp = {
 const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const incomingKey =
-    (req.headers['x-cron-key'] as string) ||
-    (req.query?.key as string) ||
-    '';
-  if (process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
+  const isVercelCron = !!req.headers['x-vercel-cron'];
+  const incomingKey = (req.headers['x-cron-key'] as string) || (req.query?.key as string) || '';
+  if (!isVercelCron && process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
 
   const allowAll = 'all' in (req.query || {});
   const debug = isTrue((req.query as any)?.debug);
 
+  // DB-backed boards, fallback if empty
+  const dbBoards = await listSourcesByType('ashby');
+  const BOARDS = (dbBoards.length ? dbBoards : FALLBACK).map(b => ({ company: b.company_name, token: b.token }));
+
   let fetched = 0;
   let inserted = 0;
 
-  for (const board of BOARDS) {
+  for (const b of BOARDS) {
     try {
-      const url = `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(board)}`;
+      const url = `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(b.token)}`;
       const resp = await fetch(url, { headers: { accept: 'application/json' } });
       if (!resp.ok) continue;
 
@@ -51,15 +67,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const location = j?.location || null;
         const jobUrl = j?.jobUrl || j?.applyUrl || '';
         if (!title || !jobUrl) continue;
-        if (!allowAll && !roleMatches(title, undefined)) continue;
+        if (!allowAll && !roleMatchesWide(title)) continue;
 
-        const fingerprint = createFingerprint(board, title, location ?? undefined, jobUrl);
+        const fingerprint = createFingerprint(b.token, title, location ?? undefined, jobUrl);
 
         await upsertJob({
           fingerprint,
           source: 'ashby',
           source_id: null,
-          company: board,
+          company: b.company,
           title,
           location,
           remote: (location || '').toLowerCase().includes('remote') || /remote/i.test(title) || !!j?.isRemote,
@@ -79,10 +95,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         inserted++;
       }
     } catch (err) {
-      console.error(`Ashby failed: ${board}`, err);
+      console.error(`Ashby failed: ${b.token}`, err);
     }
   }
 
   if (debug) console.log(`[CRON] ashby fetched=${fetched} inserted=${inserted}`);
-  return res.status(200).json({ fetched, inserted });
+  await recordCronHeartbeat('ashby', fetched, inserted);
+  return res.status(200).json({ fetched, inserted, boards: BOARDS.length });
 }
