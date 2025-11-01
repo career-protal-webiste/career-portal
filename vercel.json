@@ -1,7 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
-    { "path": "/api/cron/lever",      "schedule": "5 2 * * *" },
-    { "path": "/api/cron/greenhouse",  "schedule": "10 2 * * *" }
+    { "path": "/api/cron/lever",      "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/greenhouse", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/ashby",      "schedule": "*/20 * * * *" },
+    { "path": "/api/cron/workable",   "schedule": "*/25 * * * *" },
+    { "path": "/api/cron/recruitee",  "schedule": "*/25 * * * *" }
   ]
 }
