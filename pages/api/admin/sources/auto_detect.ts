@@ -1,37 +1,49 @@
+// pages/api/admin/sources/auto_detect.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { detectATS } from '../../../../lib/ats_detect';
 import { addSource, ATSType } from '../../../../lib/sources';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const key = (req.headers['x-admin-key'] as string) || (req.query.key as string) || '';
-  if (process.env.ADMIN_KEY && key !== process.env.ADMIN_KEY) {
-    return res.status(401).json({ ok:false, error:'unauthorized' });
+  const key = (req.headers['x-admin-key'] as string) || (req.query?.key as string) || '';
+  if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
-  if (req.method !== 'POST') return res.status(405).json({ ok:false, error:'POST only' });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ ok: false, error: 'use POST' });
+  }
 
   try {
-    const { url, company_name } = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-    if (!url || !company_name) return res.status(400).json({ ok:false, error:'Need url and company_name' });
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const urls: string[] = Array.isArray(body?.urls)
+      ? body.urls
+      : body?.url
+        ? [String(body.url)]
+        : [];
 
-    const u = new URL(url);
-    const host = u.host.toLowerCase();
-    const path = u.pathname;
+    if (!urls.length) {
+      return res.status(400).json({ ok: false, error: 'missing urls[] or url' });
+    }
 
-    let type: ATSType | null = null;
-    let token: string | null = null;
+    const added: any[] = [];
+    const skipped: any[] = [];
 
-    if (host.includes('boards.greenhouse.io')) { type = 'greenhouse'; token = path.split('/').filter(Boolean)[0] || null; }
-    if (!type && host.includes('jobs.lever.co')) { type = 'lever'; token = path.split('/').filter(Boolean)[0] || null; }
-    if (!type && host.includes('ashbyhq.com'))   { type = 'ashby'; const parts = path.split('/').filter(Boolean); token = parts[0] && parts[0].toLowerCase()==='job-board' ? parts[1] : parts[0]; if (token) token = decodeURIComponent(token); }
-    if (!type && host.includes('smartrecruiters.com')) { type = 'smartrecruiters'; token = path.split('/').filter(Boolean)[0] || null; }
-    if (!type && host.includes('apply.workable.com'))  { type = 'workable'; token = path.split('/').filter(Boolean)[0] || null; }
-    if (!type && host.endsWith('.recruitee.com')) { type = 'recruitee'; token = host.replace('.recruitee.com',''); }
-    if (!type && host.includes('myworkdayjobs.com')) { type = 'workday'; const site = path.split('/').filter(Boolean)[0] || ''; const tenant = host.split('.')[0]; token = `${host}:${tenant}:${site}`; }
+    for (const raw of urls) {
+      const u = String(raw).trim();
+      const det = detectATS(u);
+      if (!det) { skipped.push({ url: u, reason: 'unrecognized' }); continue; }
 
-    if (!type || !token) return res.status(422).json({ ok:false, error:'Could not detect ATS/token from URL' });
+      // ✅ DO NOT pass `active`
+      await addSource({
+        type: det.type as ATSType,
+        token: det.token,
+        company_name: det.company_name,
+      });
 
-    await addSource({ type, token, company_name, active:true });
-    return res.status(200).json({ ok:true, detected:{ type, token, company_name } });
-  } catch (e:any) {
-    return res.status(500).json({ ok:false, error: e?.message || 'server error' });
+      added.push({ url: u, ...det });
+    }
+
+    res.status(200).json({ ok: true, added, skipped });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || 'server error' });
   }
 }
