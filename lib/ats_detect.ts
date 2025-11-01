@@ -1,45 +1,68 @@
 // lib/ats_detect.ts
-import { ATSType } from './sources';
+import type { ATSType } from './sources';
 
-export type DetectResult = { type: ATSType; token: string; company_name?: string } | null;
+export type DetectResult = {
+  type: ATSType;
+  token: string;        // vendor “board token” / tenant
+  company_name: string; // pretty name for UI
+};
 
-export function detectATS(raw: string): DetectResult {
-  try {
-    const u = new URL(raw.trim());
-    const host = u.host.toLowerCase();
-    const path = u.pathname;
+const pretty = (slug: string) =>
+  decodeURIComponent(slug.replace(/[-_]/g, ' '))
+    .replace(/\b\w/g, c => c.toUpperCase())
+    .trim();
 
-    // Greenhouse
-    let m = raw.match(/boards\.greenhouse\.io\/([^\/\?#]+)/i)
-          || raw.match(/greenhouse\.io\/v1\/boards\/([^\/\?#]+)/i);
-    if (m) return { type:'greenhouse', token: m[1].toLowerCase() };
+export function detectATS(raw: string): DetectResult | null {
+  if (!raw) return null;
+  let url: URL;
+  try { url = new URL(raw.trim()); } catch { return null; }
 
-    // Lever
-    m = raw.match(/jobs\.lever\.co\/([^\/\?#]+)/i);
-    if (m) return { type:'lever', token: m[1] };
+  const host = url.hostname.toLowerCase();
+  const parts = url.pathname.split('/').filter(Boolean);
 
-    // Ashby
-    m = raw.match(/jobs\.ashbyhq\.com\/([^\/\?#]+)/i);
-    if (m) return { type:'ashby', token: m[1] };
+  // Greenhouse: boards.greenhouse.io/<token>
+  if (host.endsWith('greenhouse.io') || host.includes('greenhouse')) {
+    const idx = parts.findIndex(p => p === 'boards' || p === 'board' || p === 'greenhouse');
+    const token = idx >= 0 ? (parts[idx + 1] || parts[0]) : parts[0];
+    if (token) return { type: 'greenhouse', token: token.toLowerCase(), company_name: pretty(token) };
+  }
 
-    // Workable
-    m = host.match(/^([a-z0-9\-]+)\.workable\.com$/i);
-    if (m) return { type:'workable', token: m[1] };
+  // Ashby: jobs.ashbyhq.com/<Company>
+  if (host.endsWith('ashbyhq.com')) {
+    const token = parts[0];
+    if (token) return { type: 'ashby', token, company_name: pretty(token) };
+  }
 
-    // Recruitee
-    m = host.match(/^([a-z0-9\-]+)\.recruitee\.com$/i);
-    if (m) return { type:'recruitee', token: m[1] };
+  // Lever: jobs.lever.co/<company>
+  if (host.endsWith('lever.co')) {
+    const token = parts[0];
+    if (token) return { type: 'lever', token, company_name: pretty(token) };
+  }
 
-    // SmartRecruiters
-    m = raw.match(/careers\.smartrecruiters\.com\/([^\/\?#]+)/i)
-      || raw.match(/api\.smartrecruiters\.com\/v1\/companies\/([^\/\?#]+)/i);
-    if (m) return { type:'smartrecruiters', token: m[1] };
+  // Workable: <sub>.workable.com
+  if (host.endsWith('workable.com')) {
+    const sub = host.split('.')[0];
+    if (sub && sub !== 'www') return { type: 'workable', token: sub, company_name: pretty(sub) };
+  }
 
-    // Workday (tenant slug)
-    m = raw.match(/myworkdayjobs\.com\/([^\/\?#]+)/i);
-    if (m) return { type:'workday', token: m[1] };
+  // Recruitee: <company>.recruitee.com
+  if (host.endsWith('recruitee.com')) {
+    const sub = host.split('.')[0];
+    if (sub && sub !== 'www') return { type: 'recruitee', token: sub, company_name: pretty(sub) };
+  }
 
-    // Some companies link to /careers which redirect to one above; you can paste their final URL.
-    return null;
-  } catch { return null; }
+  // SmartRecruiters: careers.smartrecruiters.com/<CompanySlug>
+  if (host.endsWith('smartrecruiters.com')) {
+    const token = parts[0];
+    if (token) return { type: 'smartrecruiters', token, company_name: pretty(token) };
+  }
+
+  // Workday: *.myworkdayjobs.com/(en-US|de-DE|…)?/<tenant>(/|$)…
+  if (host.endsWith('myworkdayjobs.com')) {
+    let tenant = parts[0];
+    if (/^[a-z]{2}-[A-Z]{2}$/.test(tenant)) tenant = parts[1]; // skip locale segment
+    if (tenant) return { type: 'workday', token: tenant, company_name: pretty(tenant) };
+  }
+
+  return null;
 }
