@@ -27,8 +27,12 @@ function buildUrl(sub: string, slug?: string, fallback?: string) {
   return fallback || `https://${sub}.recruitee.com/`;
 }
 
+const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const allowAll = 'all' in (req.query || {}); // /api/cron/recruitee?all=1
+  const allowAll = 'all' in (req.query || {});
+  const debug = isTrue((req.query as any)?.debug);
+  let fetched = 0;
   let inserted = 0;
 
   for (const sub of SUBDOMAINS) {
@@ -41,6 +45,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const offers = Array.isArray(data?.offers) ? data.offers : [];
 
       for (const o of offers) {
+        fetched++;
+
         if (o.state && o.state !== 'published') continue;
 
         const title = (o.title || '').trim();
@@ -49,7 +55,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const location = [city, country].filter(Boolean).join(', ') || null;
         const jobUrl = buildUrl(sub, o.slug, o.url);
         if (!title || !jobUrl) continue;
-
         if (!allowAll && !roleMatches(title, undefined)) continue;
 
         const fingerprint = createFingerprint(sub, title, location ?? undefined, jobUrl);
@@ -63,7 +68,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           location,
           remote: /remote/i.test(String(location)) || /remote/i.test(title),
           employment_type: null,
-          // ✅ pass 2nd arg
           experience_hint: inferExperience(title, undefined),
           category: normalize(null),
           url: jobUrl,
@@ -76,12 +80,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           visa_tags: null,
         });
 
-        inserted += 1;
+        inserted++;
       }
     } catch (err) {
       console.error(`Recruitee company failed: ${sub}`, err);
     }
   }
 
-  res.status(200).json({ inserted });
+  if (debug) console.log(`[CRON] recruitee fetched=${fetched} inserted=${inserted}`);
+  return res.status(200).json({ fetched, inserted });
 }
