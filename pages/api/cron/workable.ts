@@ -35,7 +35,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       for (const j of jobs) {
         if (j.state && j.state !== 'published') continue;
-        const title = j.title?.trim() || '';
+
+        const title = (j.title || '').trim();
         const location = j.location || null;
         const jobUrl = j.url || j.application_url || '';
         if (!title || !jobUrl) continue;
@@ -53,7 +54,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           location,
           remote: /remote/i.test(String(location)) || /remote/i.test(title),
           employment_type: null,
-          experience_hint: inferExperience(title),
+          // ✅ pass 2nd arg
+          experience_hint: inferExperience(title, undefined),
           category: normalize(null),
           url: jobUrl,
           posted_at: j.updated_at || j.published_at || null,
