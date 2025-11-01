@@ -20,7 +20,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const det = detectATS(u);
       if (!det) { skipped.push({ url: u, reason: 'unrecognized' }); continue; }
 
-      await addSource(det.type as ATSType, det.token, det.company_name);
+      // ✅ addSource expects a single object, not 3 args
+      await addSource({
+        type: det.type as ATSType,
+        token: det.token,
+        company_name: det.company_name,
+      });
+
       added.push({ url: u, ...det });
     }
 
