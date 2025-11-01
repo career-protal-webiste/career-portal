@@ -1,9 +1,7 @@
-// pages/api/cron/workable.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { upsertJob } from '../../../lib/db';
 import { createFingerprint, roleMatches, inferExperience, normalize } from '../../../lib/jobs';
 
-// Workable subdomains from https://apply.workable.com/<subdomain>/
 const SUBDOMAINS = [
   'typeform','hotjar','grammarly','deliveroo','udemy','monday','babbel','camunda','bitpanda','unity'
 ];
@@ -17,14 +15,22 @@ type WorkableJob = {
   published_at?: string;
   state?: string;
 };
-
 type WorkableResp = { jobs?: WorkableJob[] };
 
 const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const incomingKey =
+    (req.headers['x-cron-key'] as string) ||
+    (req.query?.key as string) ||
+    '';
+  if (process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+
   const allowAll = 'all' in (req.query || {});
   const debug = isTrue((req.query as any)?.debug);
+
   let fetched = 0;
   let inserted = 0;
 
@@ -39,7 +45,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       for (const j of jobs) {
         fetched++;
-
         if (j.state && j.state !== 'published') continue;
 
         const title = (j.title || '').trim();
@@ -74,7 +79,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         inserted++;
       }
     } catch (err) {
-      console.error(`Workable subdomain failed: ${sub}`, err);
+      console.error(`Workable failed: ${sub}`, err);
     }
   }
 
