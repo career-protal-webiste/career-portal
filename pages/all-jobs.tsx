@@ -1,129 +1,225 @@
 // pages/all-jobs.tsx
 import { useEffect, useMemo, useState } from 'react';
+import Head from 'next/head';
 
-type Row = {
+type Job = {
   company: string;
   title: string;
   source: string;
   url: string;
   location: string | null;
-  when_time: string;
+  when_time: string | null;
 };
-type Feed = {
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-  maxAgeDays: number;
-  usOnly: boolean;
-  q: string;
-  roles: string;
-  results: Row[];
-};
+
+const ROLE_OPTIONS = [
+  { key: 'software', label: 'Software' },
+  { key: 'data_engineer', label: 'Data Eng' },
+  { key: 'data_science', label: 'Data Science / ML' },
+  { key: 'devops', label: 'DevOps / SRE' },
+  { key: 'security', label: 'Security' },
+  { key: 'qa', label: 'QA / SDET' },
+  { key: 'analyst', label: 'Analyst' },
+  { key: 'product', label: 'Product' },
+];
+
+const AGE_OPTIONS = [
+  { v: 1, label: 'Last 24h' },
+  { v: 3, label: 'Last 3 days' },
+  { v: 7, label: 'Last 7 days' },
+  { v: 30, label: 'Last 30 days' },
+  { v: 60, label: 'Last 60 days' },
+];
+
+function timeAgo(iso?: string | null) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const diff = Math.max(0, Date.now() - d.getTime());
+  const h = Math.floor(diff / 36e5);
+  if (h < 24) return `${h}h ago`;
+  const d2 = Math.floor(h / 24);
+  return `${d2}d ago`;
+}
 
 export default function AllJobs() {
   const [q, setQ] = useState('');
-  const [usOnly, setUsOnly] = useState(true);       // keep US-only, but broadened server-side
-  const [roles, setRoles] = useState<'' | 'popular'>(''); // default = show ALL roles
-  const [maxAgeDays, setMaxAgeDays] = useState(60); // bigger window so you see volume
-  const pageSize = 100;
-
+  const [usOnly, setUsOnly] = useState(true);
+  const [age, setAge] = useState(7);
+  const [selectedRoles, setSelectedRoles] = useState<string[]>(['software','data_engineer','data_science']);
   const [page, setPage] = useState(1);
-  const [data, setData] = useState<Feed | null>(null);
-  const [items, setItems] = useState<Row[]>([]);
+  const [pageSize, setPageSize] = useState(50);
+
   const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState<Job[]>([]);
+  const [total, setTotal] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  const url = useMemo(() => {
-    const u = new URL('/api/jobs_feed', typeof window === 'undefined' ? 'http://localhost' : window.location.origin);
-    u.searchParams.set('page', String(page));
-    u.searchParams.set('pageSize', String(pageSize));
-    u.searchParams.set('maxAgeDays', String(maxAgeDays));
-    u.searchParams.set('usOnly', usOnly ? '1' : '0');
-    if (roles) u.searchParams.set('roles', roles);
-    if (q.trim()) u.searchParams.set('q', q.trim());
-    return u.toString();
-  }, [page, pageSize, maxAgeDays, usOnly, roles, q]);
+  const rolesCsv = useMemo(() => selectedRoles.join(','), [selectedRoles]);
 
-  async function load(merge=false) {
+  async function load() {
     setLoading(true);
     try {
-      const r = await fetch(url);
-      const j: Feed = await r.json();
-      setData(j);
-      setItems(merge ? [...items, ...j.results] : j.results);
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+        q,
+        usOnly: usOnly ? '1' : '0',
+        maxAgeDays: String(age),
+        roles: rolesCsv,
+      });
+      const r = await fetch(`/api/jobs_feed?${params.toString()}`);
+      const j = await r.json();
+      setRows(j.results || []);
+      setTotal(j.total || 0);
+      // reflect in URL for shareability
+      const url = `/all-jobs?${params.toString()}`;
+      window.history.replaceState(null, '', url);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { load(page > 1); /* eslint-disable-next-line */ }, [page, url]);
-
-  function apply() {
-    setPage(1);
-    load(false);
-  }
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, pageSize]);
+  // Apply button will also call load().
 
   return (
-    <div style={{ maxWidth: 980, margin: '40px auto', padding: '0 16px', fontFamily: 'Inter, system-ui, Arial, sans-serif' }}>
-      <h1 style={{ fontSize: 28, marginBottom: 8 }}>All Jobs (Paginated)</h1>
+    <>
+      <Head><title>All Jobs — Career Portal</title></Head>
+      <div className="min-h-screen bg-neutral-950 text-neutral-100">
+        <div className="mx-auto max-w-5xl px-4 py-6">
+          <div className="mb-4 flex items-center justify-between">
+            <h1 className="text-2xl font-semibold">All Jobs</h1>
+            <div className="text-sm text-neutral-400">
+              {loading ? 'Loading…' : `Showing ${rows.length} of ${total} • Page ${page}/${totalPages}`}
+            </div>
+          </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto auto', gap: 8, alignItems: 'center', marginBottom: 12 }}>
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search title/company…" style={{ padding: 10, borderRadius: 8, border: '1px solid #ddd' }} />
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input type="checkbox" checked={usOnly} onChange={e => setUsOnly(e.target.checked)} />
-          US only
-        </label>
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input type="checkbox" checked={roles === 'popular'} onChange={e => setRoles(e.target.checked ? 'popular' : '')} />
-          STEM focus
-        </label>
-        <select value={maxAgeDays} onChange={e => setMaxAgeDays(parseInt(e.target.value, 10))}
-                style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #ddd', background: '#fff' }}>
-          <option value={1}>Last 24 hours</option>
-          <option value={7}>Last 7 days</option>
-          <option value={14}>Last 14 days</option>
-          <option value={30}>Last 30 days</option>
-          <option value={60}>Last 60 days</option>
-        </select>
-        <button onClick={apply} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #222', background: '#111', color: '#fff' }}>
-          Apply
-        </button>
-      </div>
+          {/* Filters */}
+          <div className="sticky top-0 z-10 mb-6 rounded-xl border border-neutral-800 bg-neutral-900/70 backdrop-blur px-4 py-3">
+            <div className="flex flex-wrap gap-3">
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search title / company / location"
+                className="flex-1 min-w-[260px] rounded-lg bg-neutral-800 px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={usOnly} onChange={() => setUsOnly(!usOnly)} />
+                US only
+              </label>
+              <select
+                value={age}
+                onChange={(e) => setAge(parseInt(e.target.value))}
+                className="rounded-lg bg-neutral-800 px-3 py-2"
+              >
+                {AGE_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+              </select>
+              <select
+                value={pageSize}
+                onChange={(e) => { setPage(1); setPageSize(parseInt(e.target.value)); }}
+                className="rounded-lg bg-neutral-800 px-3 py-2"
+              >
+                {[25,50,100].map(n => <option key={n} value={n}>{n}/page</option>)}
+              </select>
+              <button
+                onClick={() => { setPage(1); load(); }}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500"
+              >
+                Apply
+              </button>
+            </div>
 
-      {data && (
-        <div style={{ color: '#666', marginBottom: 12 }}>
-          Showing <b>{items.length}</b> of <b>{data.total}</b> jobs — page <b>{data.page}</b> / {data.totalPages}
+            {/* Role chips */}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {ROLE_OPTIONS.map(r => {
+                const on = selectedRoles.includes(r.key);
+                return (
+                  <button
+                    key={r.key}
+                    onClick={() => {
+                      setPage(1);
+                      setSelectedRoles(on
+                        ? selectedRoles.filter(k => k !== r.key)
+                        : [...selectedRoles, r.key]);
+                    }}
+                    className={`rounded-full px-3 py-1 text-sm border ${
+                      on ? 'bg-blue-600 border-blue-500' : 'bg-neutral-800 border-neutral-700 hover:bg-neutral-700'
+                    }`}
+                  >
+                    {r.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* List */}
+          <div className="space-y-3">
+            {rows.map((j, i) => (
+              <a
+                key={`${j.url}-${i}`}
+                href={j.url} target="_blank" rel="noreferrer"
+                className="block rounded-xl border border-neutral-800 bg-neutral-900 p-4 hover:border-neutral-700"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-lg font-semibold leading-tight">{j.title}</div>
+                    <div className="mt-1 text-sm text-neutral-300">{j.company}</div>
+                    <div className="mt-1 text-sm text-neutral-400">{j.location || '—'}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 px-2 py-1 text-xs text-neutral-300">
+                      <span>{j.source}</span>
+                      <span className="opacity-60">•</span>
+                      <span>{timeAgo(j.when_time)}</span>
+                    </div>
+                  </div>
+                </div>
+              </a>
+            ))}
+
+            {!loading && rows.length === 0 && (
+              <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-6 text-center text-neutral-300">
+                No results. Try widening filters.
+              </div>
+            )}
+          </div>
+
+          {/* Pagination */}
+          <div className="mt-6 flex items-center justify-center gap-2">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="rounded-lg border border-neutral-700 px-3 py-1 text-sm disabled:opacity-40"
+            >
+              Prev
+            </button>
+            {Array.from({ length: Math.min(7, totalPages) }).map((_, idx) => {
+              // simple window around current
+              const start = Math.max(1, Math.min(page - 3, totalPages - 6));
+              const n = start + idx;
+              if (n > totalPages) return null;
+              return (
+                <button
+                  key={n}
+                  onClick={() => setPage(n)}
+                  className={`rounded-lg px-3 py-1 text-sm ${
+                    n === page ? 'bg-blue-600' : 'border border-neutral-700'
+                  }`}
+                >
+                  {n}
+                </button>
+              );
+            })}
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              className="rounded-lg border border-neutral-700 px-3 py-1 text-sm disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
         </div>
-      )}
-
-      <div style={{ display: 'grid', gap: 10 }}>
-        {items.map((r, i) => (
-          <a key={`${r.url}-${i}`} href={r.url} target="_blank" rel="noreferrer"
-             style={{ padding: 14, border: '1px solid #eee', borderRadius: 10, textDecoration: 'none', color: '#111' }}>
-            <div style={{ fontSize: 16, fontWeight: 600 }}>{r.title}</div>
-            <div style={{ fontSize: 14, color: '#444' }}>{r.company} · {r.location || '—'} · {r.source}</div>
-            <div style={{ fontSize: 12, color: '#888', marginTop: 6 }}>{new Date(r.when_time).toLocaleString()}</div>
-          </a>
-        ))}
       </div>
-
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 18 }}>
-        <button disabled={loading || !data || data.page <= 1}
-                onClick={() => setPage(p => Math.max(1, p - 1))}
-                style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #ddd', background: '#fff' }}>
-          ← Prev
-        </button>
-        <button disabled={loading || !data || data.page >= (data.totalPages || 1)}
-                onClick={() => setPage(p => p + 1)}
-                style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #ddd', background: '#fff' }}>
-          Next →
-        </button>
-        <button disabled={loading || !data || data.page >= (data.totalPages || 1)}
-                onClick={() => setPage(p => p + 1)}
-                style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #222', background: '#111', color: '#fff' }}>
-          Load more
-        </button>
-      </div>
-    </div>
+    </>
   );
 }
