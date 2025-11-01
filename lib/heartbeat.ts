@@ -1,5 +1,5 @@
 // lib/heartbeat.ts
-import { sql } from './db';
+import { sql } from '@vercel/postgres';
 
 export type CronSource =
   | 'greenhouse'
@@ -14,11 +14,11 @@ type HBRow = {
   source: string;
   fetched: number | null;
   inserted: number | null;
-  created_at: string; // ISO
+  created_at: string | Date;
 };
 
 async function ensureTable() {
-  // Safe to run on every call
+  // Safe to run every call
   await sql`
     CREATE TABLE IF NOT EXISTS cron_heartbeats (
       id         BIGSERIAL PRIMARY KEY,
@@ -34,7 +34,7 @@ async function ensureTable() {
   `;
 }
 
-/** Record the result of a cron run */
+/** Record a cron run result */
 export async function recordCronHeartbeat(
   source: CronSource,
   fetched: number,
@@ -47,11 +47,11 @@ export async function recordCronHeartbeat(
   `;
 }
 
-/** Summarize last run per source and whether it’s fresh within threshold_min */
+/** Latest status per source + freshness */
 export async function getCronStatus(thresholdMin = 120) {
   await ensureTable();
 
-  const rows = await sql<HBRow[]>`
+  const { rows } = await sql<HBRow>`
     WITH latest AS (
       SELECT DISTINCT ON (source)
         source, fetched, inserted, created_at
@@ -64,11 +64,8 @@ export async function getCronStatus(thresholdMin = 120) {
 
   const now = new Date();
   const entries = rows.map((r) => {
-    const last = new Date(r.created_at);
-    const ageMin = Math.max(
-      0,
-      Math.floor((now.getTime() - last.getTime()) / 60000)
-    );
+    const last = new Date(r.created_at as any);
+    const ageMin = Math.max(0, Math.floor((now.getTime() - last.getTime()) / 60000));
     return {
       source: r.source,
       last_run_at: last.toISOString(),
