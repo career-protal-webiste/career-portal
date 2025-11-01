@@ -1,5 +1,5 @@
 // components/FiltersBar.tsx
-import React from 'react';
+import React, { CSSProperties } from 'react';
 
 export const ROLE_OPTIONS = [
   { key: 'software',      label: 'Software Eng' },
@@ -77,8 +77,13 @@ const s:Record<string,any>={
   roles:{marginTop:10, display:'flex', flexWrap:'wrap', gap:8}
 };
 
-const pill = (active:boolean)=>({
-  borderRadius:999, padding:'6px 10px', fontSize:13, cursor:'pointer', userSelect:'none',
+// ✅ make TS happy by returning a typed CSSProperties and a literal for userSelect
+const pill = (active:boolean): CSSProperties => ({
+  borderRadius:999,
+  padding:'6px 10px',
+  fontSize:13,
+  cursor:'pointer',
+  userSelect:'none', // typed correctly now
   border:`1px solid ${active?'var(--brand)':'var(--border)'}`,
   background: active ? 'var(--brand-2)' : 'var(--panel-2)',
   color: active ? '#dfe6ff' : '#c8c8c8',
