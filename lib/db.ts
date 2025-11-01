@@ -63,3 +63,64 @@ export async function upsertJob(j: JobInsert): Promise<void> {
       visa_tags       = COALESCE(EXCLUDED.visa_tags, jobs.visa_tags)
   `;
 }
+
+/**
+ * Creates required tables and indexes if they don't exist.
+ * Safe to run repeatedly.
+ */
+export async function migrate(): Promise<void> {
+  // jobs table
+  await sql`
+    CREATE TABLE IF NOT EXISTS jobs (
+      fingerprint      TEXT PRIMARY KEY,
+      source           TEXT NOT NULL,                 -- greenhouse | lever | ashby | workable | recruitee | smartrecruiters | workday
+      source_id        TEXT,
+      company          TEXT NOT NULL,
+      title            TEXT NOT NULL,
+      location         TEXT,
+      remote           BOOLEAN NOT NULL DEFAULT false,
+      employment_type  TEXT,
+      experience_hint  TEXT,
+      category         TEXT,
+      url              TEXT NOT NULL,
+      posted_at        TIMESTAMPTZ,
+      scraped_at       TIMESTAMPTZ NOT NULL,
+      description      TEXT,
+      salary_min       INTEGER,
+      salary_max       INTEGER,
+      currency         TEXT,
+      visa_tags        TEXT
+    );
+  `;
+
+  // helpful indexes for feeds/filters
+  await sql`CREATE INDEX IF NOT EXISTS idx_jobs_posted_at ON jobs (posted_at DESC NULLS LAST);`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_jobs_company   ON jobs (company);`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_jobs_source    ON jobs (source);`;
+
+  // ats_sources table (company → ATS token)
+  await sql`
+    CREATE TABLE IF NOT EXISTS ats_sources (
+      id           SERIAL PRIMARY KEY,
+      type         TEXT NOT NULL,      -- same set as jobs.source
+      token        TEXT NOT NULL,
+      company_name TEXT NOT NULL,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (type, token)
+    );
+  `;
+
+  // cron_heartbeats table (ingestion monitoring)
+  await sql`
+    CREATE TABLE IF NOT EXISTS cron_heartbeats (
+      id       SERIAL PRIMARY KEY,
+      source   TEXT NOT NULL,          -- same set as jobs.source
+      ran_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      fetched  INTEGER,
+      inserted INTEGER
+    );
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_cron_source_time ON cron_heartbeats (source, ran_at DESC);`;
+}
