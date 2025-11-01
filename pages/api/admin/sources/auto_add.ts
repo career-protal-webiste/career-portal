@@ -8,6 +8,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
+  if (req.method !== 'POST') {
+    return res.status(405).json({ ok: false, error: 'use POST' });
+  }
 
   try {
     const body = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) || {};
@@ -20,13 +23,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const det = detectATS(u);
       if (!det) { skipped.push({ url: u, reason: 'unrecognized' }); continue; }
 
-      // ✅ addSource expects a single object, not 3 args
       await addSource({
         type: det.type as ATSType,
         token: det.token,
         company_name: det.company_name,
       });
-
       added.push({ url: u, ...det });
     }
 
