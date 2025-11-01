@@ -1,9 +1,6 @@
 // lib/heartbeat.ts
 import { sql } from '@vercel/postgres';
 
-/**
- * Add any new cron source types here.
- */
 export type CronSource =
   | 'greenhouse'
   | 'lever'
@@ -40,4 +37,31 @@ export async function recordCronHeartbeat(
           inserted    = EXCLUDED.inserted,
           updated_at  = NOW();
   `;
+}
+
+export async function getCronStatus(thresholdMin: number) {
+  await ensureTable();
+  const nowRow = await sql/*sql*/`SELECT NOW()::timestamptz AS now`;
+  const now: string = (nowRow.rows[0] as any).now;
+
+  const r = await sql/*sql*/`
+    SELECT source, last_run_at, fetched, inserted
+    FROM cron_heartbeats
+    ORDER BY source ASC
+  `;
+
+  const entries = r.rows.map((row: any) => {
+    const last = new Date(row.last_run_at).getTime();
+    const ageMin = Math.floor((Date.now() - last) / 60000);
+    return {
+      source: row.source as CronSource,
+      last_run_at: row.last_run_at,
+      fetched: Number(row.fetched) || 0,
+      inserted: Number(row.inserted) || 0,
+      age_min: ageMin,
+      fresh: ageMin <= thresholdMin
+    };
+  });
+
+  return { now, threshold_min: thresholdMin, entries };
 }
