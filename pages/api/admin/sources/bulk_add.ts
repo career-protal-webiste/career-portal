@@ -10,7 +10,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const items = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) || [];
-    // items: [{type:'greenhouse', token:'stripe', company_name:'Stripe'}, ...]
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ ok: false, error: 'Empty body' });
     await bulkAddSources(items as any);
     res.status(200).json({ ok: true, added: items.length });
