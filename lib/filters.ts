@@ -1,4 +1,5 @@
 // lib/filters.ts
+// --- Role groups used by /api/jobs_feed role filtering (UI facets) ---
 export const ROLE_GROUPS: Record<string, string[]> = {
   software: [
     'software engineer','sde','backend','back-end','frontend','front-end','full stack','full-stack',
@@ -30,6 +31,7 @@ export const ROLE_GROUPS: Record<string, string[]> = {
   ],
 };
 
+// Convert roles CSV into ILIKE patterns for SQL
 export function patternsForRolesCsv(csv?: string): string[] {
   if (!csv) return [];
   const keys = csv.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
@@ -39,4 +41,13 @@ export function patternsForRolesCsv(csv?: string): string[] {
     if (list) list.forEach(p => phrases.add(`%${p}%`));
   }
   return Array.from(phrases);
+}
+
+/**
+ * 🔧 Back-compat shim so existing crons still compile.
+ * We no longer filter at cron time; we filter in /api/jobs_feed.
+ * Keeping this here avoids touching every cron file.
+ */
+export function roleMatchesWide(_title: string): boolean {
+  return true; // ingest everything at cron time
 }
