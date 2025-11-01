@@ -20,8 +20,12 @@ type AshbyResp = {
   }>;
 };
 
+const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const allowAll = 'all' in (req.query || {}); // /api/cron/ashby?all=1 to skip role filtering
+  const allowAll = 'all' in (req.query || {});
+  const debug = isTrue((req.query as any)?.debug);
+  let fetched = 0;
   let inserted = 0;
 
   for (const board of BOARDS) {
@@ -34,12 +38,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const jobs = Array.isArray(data?.jobs) ? data.jobs : [];
 
       for (const j of jobs) {
+        fetched++;
+
         const title = (j?.title || '').trim();
         const location = j?.location || null;
         const jobUrl = j?.jobUrl || j?.applyUrl || '';
         if (!title || !jobUrl) continue;
-
-        // Keep only relevant roles unless ?all=1
         if (!allowAll && !roleMatches(title, undefined)) continue;
 
         const fingerprint = createFingerprint(board, title, location ?? undefined, jobUrl);
@@ -53,11 +57,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           location,
           remote: (location || '').toLowerCase().includes('remote') || /remote/i.test(title) || !!j?.isRemote,
           employment_type: null,
-          // ✅ inferExperience requires 2 args in your repo
           experience_hint: inferExperience(title, undefined),
           category: normalize(null),
           url: jobUrl,
-          // ✅ fixed the typo here
           posted_at: j?.publishedAt ?? null,
           scraped_at: new Date().toISOString(),
           description: null,
@@ -67,12 +69,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           visa_tags: null,
         });
 
-        inserted += 1;
+        inserted++;
       }
     } catch (err) {
       console.error(`Ashby board failed: ${board}`, err);
     }
   }
 
-  res.status(200).json({ inserted });
+  if (debug) console.log(`[CRON] ashby fetched=${fetched} inserted=${inserted}`);
+  return res.status(200).json({ fetched, inserted });
 }
