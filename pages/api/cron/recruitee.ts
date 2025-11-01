@@ -37,7 +37,10 @@ function buildUrl(sub: string, slug?: string, fallback?: string) {
   return fallback || `https://${sub}.recruitee.com/`;
 }
 
-const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
+function isTrue(v: any) {
+  const s = String(v ?? '').toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes';
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
@@ -46,10 +49,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
 
-  const allowAll = 'all' in (req.query || {});
   const debug = isTrue((req.query as any)?.debug);
+  const FILTERED = isTrue((req.query as any)?.filtered);
 
-  // DB-backed subs, fallback if empty
   const dbSubs = await listSourcesByType('recruitee');
   const SUBS = (dbSubs.length ? dbSubs : FALLBACK).map(b => ({ company: b.company_name, token: b.token }));
 
@@ -75,7 +77,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const location = [city, country].filter(Boolean).join(', ') || null;
         const jobUrl = buildUrl(s.token, o.slug, o.url);
         if (!title || !jobUrl) continue;
-        if (!allowAll && !roleMatchesWide(title)) continue;
+        if (FILTERED && !roleMatchesWide(title)) continue;
 
         const fingerprint = createFingerprint(s.token, title, location ?? undefined, jobUrl);
 
@@ -107,7 +109,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  if (debug) console.log(`[CRON] recruitee fetched=${fetched} inserted=${inserted}`);
+  if (debug) console.log(`[CRON] recruitee fetched=${fetched} inserted=${inserted} filtered=${FILTERED}`);
   await recordCronHeartbeat('recruitee', fetched, inserted);
-  return res.status(200).json({ fetched, inserted, subs: SUBS.length });
+  return res.status(200).json({ fetched, inserted, subs: SUBS.length, filtered: FILTERED });
 }
