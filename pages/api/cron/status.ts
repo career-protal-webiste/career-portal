@@ -2,23 +2,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getCronStatus } from '../../../lib/heartbeat';
 
+function toInt(v: any, def = 120) {
+  const n = parseInt(String(v ?? ''), 10);
+  return Number.isFinite(n) && n > 0 ? n : def;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const thresholdMin = Math.max(1, parseInt((req.query?.threshold_min as string) || '120', 10)); // default 120 min
-  const now = Date.now();
-  const rows = await getCronStatus();
-
-  const entries = rows.map(r => {
-    const ranAtMs = new Date(r.ran_at).getTime();
-    const ageMin = Math.round((now - ranAtMs) / 60000);
-    return {
-      source: r.source,
-      fetched: r.fetched,
-      inserted: r.inserted,
-      ran_at: r.ran_at,
-      age_minutes: ageMin,
-      ok: ageMin <= thresholdMin
-    };
-  });
-
-  res.status(200).json({ now: new Date().toISOString(), threshold_min: thresholdMin, entries });
+  const threshold = toInt((req.query as any)?.threshold_min, 120);
+  const data = await getCronStatus(threshold);
+  res.status(200).json(data);
 }
