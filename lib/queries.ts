@@ -1,5 +1,5 @@
 // lib/queries.ts
-import { sql } from '@vercel/postgres';
+import { sql } from './db';
 
 export type JobRow = {
   fingerprint: string;
