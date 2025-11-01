@@ -1,48 +1,38 @@
 // pages/api/stats/sources.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { sql } from '../../lib/db';
+import { sql } from '../../../lib/db'; // <-- correct path
 
-type Row = {
-  source: string;
-  total_60d: number;
-  last24h: number;
-  last_run_at: string | null;
-  last_fetched: number | null;
-  last_inserted: number | null;
-};
+type Row = { source: string; count: number };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // jobs counts (limit to 60d window for “freshness”)
-  const jobs = await sql<Row>`
-    with c as (
-      select
-        source,
-        count(*) filter (
-          where now() - coalesce(posted_at::timestamptz, scraped_at::timestamptz) <= interval '60 days'
-        ) as total_60d,
-        count(*) filter (
-          where now() - coalesce(posted_at::timestamptz, scraped_at::timestamptz) <= interval '24 hours'
-        ) as last24h
-      from jobs
-      group by source
-    ),
-    h as (
-      select distinct on (source)
-        source, last_run_at, fetched, inserted
-      from cron_heartbeats
-      order by source, last_run_at desc
-    )
-    select
-      coalesce(c.source, h.source) as source,
-      coalesce(c.total_60d, 0) as total_60d,
-      coalesce(c.last24h, 0)   as last24h,
-      h.last_run_at            as last_run_at,
-      h.fetched                as last_fetched,
-      h.inserted               as last_inserted
-    from c
-    full outer join h on c.source = h.source
-    order by coalesce(c.total_60d,0) desc nulls last, coalesce(c.source,h.source);
-  `;
+  try {
+    // counts by source (last 60d window; adjust if you want)
+    const bySource = await sql<Row>`
+      SELECT source, COUNT(*)::int AS count
+      FROM jobs
+      WHERE COALESCE(posted_at, scraped_at) >= NOW() - INTERVAL '60 days'
+      GROUP BY source
+      ORDER BY count DESC
+    `;
 
-  res.status(200).json({ ok: true, rows: jobs.rows });
+    // optional: new in last 24h
+    const last24h = await sql<Row>`
+      SELECT source, COUNT(*)::int AS count
+      FROM jobs
+      WHERE scraped_at >= NOW() - INTERVAL '24 hours'
+      GROUP BY source
+      ORDER BY count DESC
+    `;
+
+    const total = bySource.rows.reduce((a, r) => a + r.count, 0);
+
+    res.status(200).json({
+      ok: true,
+      total,
+      by_source: bySource.rows,
+      last24h: last24h.rows,
+    });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || 'server error' });
+  }
 }
