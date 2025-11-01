@@ -34,7 +34,10 @@ type GHJob = {
   departments?: { name?: string }[];
 };
 
-const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
+function isTrue(v: any) {
+  const s = String(v ?? '').toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes';
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
@@ -43,8 +46,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
 
-  const allowAll = 'all' in (req.query || {});
   const debug = isTrue((req.query as any)?.debug);
+  // NEW: default ingest ALL; only filter if ?filtered=1
+  const FILTERED = isTrue((req.query as any)?.filtered);
 
   // DB-backed sources, fallback if empty
   const dbBoards = await listSourcesByType('greenhouse');
@@ -64,11 +68,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       for (const j of jobs) {
         fetched++;
+
         const title = (j.title || '').trim();
         const loc = j.location?.name || null;
         const jobUrl = j.absolute_url || '';
         if (!title || !jobUrl) continue;
-        if (!allowAll && !roleMatchesWide(title)) continue;
+        if (FILTERED && !roleMatchesWide(title)) continue;
 
         const fingerprint = createFingerprint(b.token, title, loc ?? undefined, jobUrl);
 
@@ -100,7 +105,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  if (debug) console.log(`[CRON] greenhouse fetched=${fetched} inserted=${inserted}`);
+  if (debug) console.log(`[CRON] greenhouse fetched=${fetched} inserted=${inserted} filtered=${FILTERED}`);
   await recordCronHeartbeat('greenhouse', fetched, inserted);
-  return res.status(200).json({ fetched, inserted, boards: BOARDS.length });
+  return res.status(200).json({ fetched, inserted, boards: BOARDS.length, filtered: FILTERED });
 }
