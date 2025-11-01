@@ -1,9 +1,7 @@
-// pages/api/cron/recruitee.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { upsertJob } from '../../../lib/db';
 import { createFingerprint, roleMatches, inferExperience, normalize } from '../../../lib/jobs';
 
-// Recruitee companies from https://<subdomain>.recruitee.com/
 const SUBDOMAINS = [
   'mollie','bunq','messagebird','celonis','klarna','backbase','getyourguide','wefox','treatwell','cm.com'
 ];
@@ -19,7 +17,6 @@ type Offer = {
   location?: { city?: string; country?: string };
   url?: string;
 };
-
 type OffersResp = { offers?: Offer[] };
 
 function buildUrl(sub: string, slug?: string, fallback?: string) {
@@ -30,8 +27,17 @@ function buildUrl(sub: string, slug?: string, fallback?: string) {
 const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const incomingKey =
+    (req.headers['x-cron-key'] as string) ||
+    (req.query?.key as string) ||
+    '';
+  if (process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+
   const allowAll = 'all' in (req.query || {});
   const debug = isTrue((req.query as any)?.debug);
+
   let fetched = 0;
   let inserted = 0;
 
@@ -46,7 +52,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       for (const o of offers) {
         fetched++;
-
         if (o.state && o.state !== 'published') continue;
 
         const title = (o.title || '').trim();
@@ -83,7 +88,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         inserted++;
       }
     } catch (err) {
-      console.error(`Recruitee company failed: ${sub}`, err);
+      console.error(`Recruitee failed: ${sub}`, err);
     }
   }
 
