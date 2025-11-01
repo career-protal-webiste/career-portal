@@ -6,8 +6,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (process.env.ADMIN_KEY && key !== process.env.ADMIN_KEY) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
-  const types = ['greenhouse','lever','ashby','workable','recruitee'] as const;
-  const data: any = {};
-  for (const t of types) data[t] = await listSourcesByType(t);
-  res.status(200).json({ ok: true, data });
+
+  const greenhouse = await listSourcesByType('greenhouse');
+  const lever = await listSourcesByType('lever');
+  const ashby = await listSourcesByType('ashby');
+  const workable = await listSourcesByType('workable');
+  const recruitee = await listSourcesByType('recruitee');
+  const smartrecruiters = await listSourcesByType('smartrecruiters');
+  const workday = await listSourcesByType('workday');
+
+  res.status(200).json({
+    ok: true,
+    data: { greenhouse, lever, ashby, workable, recruitee, smartrecruiters, workday },
+  });
 }
