@@ -28,21 +28,3 @@ export async function listSourcesByType(type: ATSType): Promise<{token:string, c
   `;
   return rows as any;
 }
-
-export async function addSource(type: ATSType, token: string, company_name: string) {
-  await ensureTable();
-  await sql/* sql */`
-    INSERT INTO ats_sources (type, token, company_name)
-    VALUES (${type}, ${token}, ${company_name})
-    ON CONFLICT (type, token) DO UPDATE
-    SET company_name = EXCLUDED.company_name,
-        active = TRUE,
-        updated_at = NOW();
-  `;
-}
-
-export async function bulkAddSources(items: {type: ATSType, token: string, company_name: string}[]) {
-  for (const it of items) {
-    await addSource(it.type, it.token, it.company_name);
-  }
-}
