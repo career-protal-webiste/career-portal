@@ -13,8 +13,8 @@ export type ATSType =
 export type SourceRow = {
   id?: number;
   type: ATSType;
-  token: string;        // e.g. "stripe", "Vercel", "typeform", or for Workday "host:tenant:site"
-  company_name: string; // Display name
+  token: string;
+  company_name: string;
   active?: boolean;
 };
 
