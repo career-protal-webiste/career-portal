@@ -9,11 +9,15 @@ type WDJob = {
   title?: string;
   locationsText?: string;
   postedOn?: string;       // ISO
-  externalPath?: string;   // /en-US/xxx/job/...
+  externalPath?: string;   // /en-US/.../job/...
   id?: string;
 };
 
-function truthy(v:any){ const s=String(v??'').toLowerCase(); return s==='1'||s==='true'||s==='yes'; }
+const truthy = (v:any)=> String(v ?? '').match(/^(1|true|yes)$/i) !== null;
+const CANDIDATE_SITES = [
+  'External','ExternalCareerSite','Careers','ExternalCareer','External_Career',
+  'External-Job-Posting','ExternalSite','USA','US','NorthAmerica','en-US','en-GB'
+];
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
@@ -28,77 +32,74 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const rows = await listSourcesByType('workday');
   const BOARDS = rows.map(r => ({ company: r.company_name, token: r.token }));
 
-  // Fallback example (you can delete later)
-  if (BOARDS.length === 0) {
-    BOARDS.push({ company:'Stripe', token:'stripe.wd5.myworkdayjobs.com:stripe:Stripe' });
-  }
-
-  let fetched = 0, inserted = 0;
+  let fetched=0, inserted=0;
 
   for (const b of BOARDS) {
     try {
-      const [host, tenant, site] = b.token.split(':');
-      if (!host || !tenant || !site) continue;
+      const [host, tenant, siteOrStar] = (b.token || '').split(':');
+      if (!host || !tenant) continue;
 
-      let offset = 0;
-      const limit = 50;
+      const candidates = siteOrStar && siteOrStar !== '*' ? [siteOrStar] : CANDIDATE_SITES;
+      let foundAny = false;
 
-      for (let page=0; page<60; page++) { // up to 3000 roles
-        const endpoint = `https://${host}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(site)}/jobs`;
-        const payload = {
-          appliedFacets: {},
-          limit,
-          offset,
-          searchText: ''
-        };
-        const r = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'accept': 'application/json, text/plain, */*',
-            'content-type': 'application/json'
-          },
-          body: JSON.stringify(payload)
-        });
-        if (!r.ok) break;
-        const j = await r.json();
-        const arr: WDJob[] = Array.isArray(j?.jobPostings) ? j.jobPostings : [];
+      for (const site of candidates) {
+        try {
+          let offset = 0;
+          const limit = 50;
+          let localFetched = 0;
 
-        if (!arr.length) break;
+          for (let page=0; page<80; page++) { // up to 4k jobs
+            const endpoint = `https://${host}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(site)}/jobs`;
+            const payload = { appliedFacets: {}, limit, offset, searchText: '' };
+            const r = await fetch(endpoint, {
+              method: 'POST',
+              headers: { 'accept':'application/json, text/plain, */*', 'content-type':'application/json' },
+              body: JSON.stringify(payload)
+            });
+            if (!r.ok) break;
+            const j = await r.json();
+            const arr: WDJob[] = Array.isArray(j?.jobPostings) ? j.jobPostings : [];
+            if (!arr.length) break;
 
-        for (const p of arr) {
-          fetched++;
-          const title = (p.title || '').trim();
-          const location = p.locationsText || null;
-          const url = p.externalPath ? `https://${host}${p.externalPath}` : '';
-          if (!title || !url) continue;
-          if (FILTERED && !roleMatchesWide(title)) continue;
+            for (const p of arr) {
+              fetched++; localFetched++;
+              const title = (p.title || '').trim();
+              const location = p.locationsText || null;
+              const url = p.externalPath ? `https://${host}${p.externalPath}` : '';
+              if (!title || !url) continue;
+              if (FILTERED && !roleMatchesWide(title)) continue;
 
-          const fingerprint = createFingerprint(tenant, title, location ?? undefined, url);
+              const fingerprint = createFingerprint(tenant, title, location ?? undefined, url);
 
-          await upsertJob({
-            fingerprint,
-            source: 'workday',
-            source_id: p.id || null,
-            company: b.company,
-            title,
-            location,
-            remote: /remote/i.test(`${title} ${String(location)}`),
-            employment_type: null,
-            experience_hint: inferExperience(title, undefined),
-            category: normalize(null),
-            url,
-            posted_at: p.postedOn || null,
-            scraped_at: new Date().toISOString(),
-            description: null,
-            salary_min: null,
-            salary_max: null,
-            currency: null,
-            visa_tags: null,
-          });
-          inserted++;
-        }
-        offset += limit;
+              await upsertJob({
+                fingerprint,
+                source: 'workday',
+                source_id: p.id || null,
+                company: b.company,
+                title,
+                location,
+                remote: /remote/i.test(`${title} ${String(location)}`),
+                employment_type: null,
+                experience_hint: inferExperience(title, undefined),
+                category: normalize(null),
+                url,
+                posted_at: p.postedOn || null,
+                scraped_at: new Date().toISOString(),
+                description: null,
+                salary_min: null,
+                salary_max: null,
+                currency: null,
+                visa_tags: null,
+              });
+              inserted++;
+            }
+            offset += limit;
+          }
+
+          if (localFetched > 0) { foundAny = true; break; } // stop trying other sites
+        } catch { /* try next candidate */ }
       }
+      if (!foundAny && debug) console.log(`workday: no jobs for ${b.token}`);
     } catch (e) {
       console.error('workday failed', b.token, e);
     }
