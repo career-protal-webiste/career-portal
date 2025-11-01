@@ -1,66 +1,85 @@
-// pages/api/cron/lever.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { upsertJob } from '../../../lib/db';
 import { createFingerprint, roleMatches, inferExperience, normalize } from '../../../lib/jobs';
 
-const COMPANIES = ['databricks', 'snowflake', 'notion', 'hubspot']; // edit as you like
+const COMPANIES = [
+  'databricks','snowflake','notion','hubspot','robinhood','niantic','scaleai','chime','doordash',
+  'reddit','opendoor','discord','vercel','samsara','ramp','mercury','plaid','stripe','affirm','airtable'
+];
 
-export default async function handler(_req: NextApiRequest, res: NextApiResponse) {
-  const allowAll = 'all' in (_req.query || {}); // /api/cron/lever?all=1 to skip filtering
+type LeverJob = {
+  id?: string;
+  text?: string;                // title
+  hostedUrl?: string;
+  createdAt?: number;           // ms
+  categories?: { location?: string; team?: string; commitment?: string };
+  workplaceType?: string;
+};
+
+const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // 🔐 shared secret (header or ?key=)
+  const incomingKey =
+    (req.headers['x-cron-key'] as string) ||
+    (req.query?.key as string) ||
+    '';
+  if (process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+
+  const allowAll = 'all' in (req.query || {});
+  const debug = isTrue((req.query as any)?.debug);
+
+  let fetched = 0;
   let inserted = 0;
 
-  for (const company of COMPANIES) {
+  for (const slug of COMPANIES) {
     try {
-      const response = await fetch(`https://api.lever.co/v0/postings/${company}?mode=json`);
-      if (!response.ok) continue;
+      const url = `https://api.lever.co/v0/postings/${encodeURIComponent(slug)}?mode=json`;
+      const resp = await fetch(url, { headers: { accept: 'application/json' } });
+      if (!resp.ok) continue;
 
-      const postings = (await response.json()) as any[];
+      const jobs = (await resp.json()) as LeverJob[];
+      for (const j of jobs) {
+        fetched++;
 
-      for (const posting of postings) {
-        const title = posting.text || '';
-        const description = posting.descriptionPlain || '';
+        const title = (j.text || '').trim();
+        const loc = j.categories?.location || null;
+        const jobUrl = j.hostedUrl || (j.id ? `https://jobs.lever.co/${slug}/${j.id}` : '');
+        if (!title || !jobUrl) continue;
+        if (!allowAll && !roleMatches(title, undefined)) continue;
 
-        if (!allowAll && !roleMatches(title, description)) continue;
-
-        const companyName = posting.categories?.team || posting.company || company;
-        const locationName = posting.categories?.location ?? null;
-
-        const fingerprint = createFingerprint(
-          companyName,
-          title,
-          locationName ?? undefined,
-          posting.hostedUrl
-        );
+        const fingerprint = createFingerprint(slug, title, loc ?? undefined, jobUrl);
 
         await upsertJob({
           fingerprint,
           source: 'lever',
-          source_id: String(posting.id),
-          company: companyName,
+          source_id: j.id || null,
+          company: slug,
           title,
-          location: locationName,
-          remote:
-            /remote/i.test(posting.categories?.location || '') ||
-            posting.workplaceType === 'remote',
-          employment_type: posting.categories?.commitment ?? null,
-          experience_hint: inferExperience(title, description),
-          category: normalize(posting.categories?.team),
-          url: posting.hostedUrl,
-          posted_at: posting.createdAt ? new Date(posting.createdAt) : null,
-          scraped_at: new Date(),
-          description,
-          salary_min: posting.salaryRange2?.min ?? null,
-          salary_max: posting.salaryRange2?.max ?? null,
-          currency: posting.salaryRange2?.currency ?? null,
-          visa_tags: posting.tags?.filter((t: string) => /visa/i.test(t)) ?? null,
+          location: loc,
+          remote: (j.workplaceType === 'remote') || /remote/i.test(String(loc)) || /remote/i.test(title),
+          employment_type: j.categories?.commitment || null,
+          experience_hint: inferExperience(title, undefined),
+          category: normalize(j.categories?.team || null),
+          url: jobUrl,
+          posted_at: j.createdAt ? new Date(j.createdAt).toISOString() : null,
+          scraped_at: new Date().toISOString(),
+          description: null,
+          salary_min: null,
+          salary_max: null,
+          currency: null,
+          visa_tags: null,
         });
 
-        inserted += 1;
+        inserted++;
       }
-    } catch (error) {
-      console.error(`Failed to fetch Lever postings for ${company}:`, error);
+    } catch (err) {
+      console.error(`Lever failed: ${slug}`, err);
     }
   }
 
-  res.status(200).json({ inserted });
+  if (debug) console.log(`[CRON] lever fetched=${fetched} inserted=${inserted}`);
+  return res.status(200).json({ fetched, inserted });
 }
