@@ -1,11 +1,8 @@
-// pages/api/admin/sources/bulk_add.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { bulkAddSources, ATSType } from '../../../../lib/sources';
 
 export const config = {
-  api: {
-    bodyParser: { sizeLimit: '2mb' }, // ⬅ increase from Next.js default 1mb
-  },
+  api: { bodyParser: { sizeLimit: '2mb' } },
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -17,32 +14,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     let items: any = req.body;
-
-    // Handle raw string body
-    if (typeof items === 'string') {
-      items = JSON.parse(items);
-    }
-
-    // Also support { items: [...] }
-    if (items && !Array.isArray(items) && Array.isArray(items.items)) {
-      items = items.items;
-    }
-
+    if (typeof items === 'string') items = JSON.parse(items);
+    if (items && !Array.isArray(items) && Array.isArray(items.items)) items = items.items;
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ ok: false, error: 'Body must be a non-empty JSON array' });
     }
 
-    // Basic schema check
-    const bad = items.find(
-      (x: any) => !x || !x.type || !x.token || !x.company_name
-    );
+    const bad = items.find((x: any) => !x || !x.type || !x.token || !x.company_name);
     if (bad) return res.status(400).json({ ok: false, error: 'Each item needs type, token, company_name' });
 
-    // Cast types safely
     const casted = items.map((x: any) => ({
       type: String(x.type) as ATSType,
       token: String(x.token),
       company_name: String(x.company_name),
+      active: true,
     }));
 
     await bulkAddSources(casted);
