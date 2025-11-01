@@ -1,5 +1,12 @@
+// pages/api/admin/sources/bulk_add.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { bulkAddSources } from '../../../../lib/sources';
+import { bulkAddSources, ATSType } from '../../../../lib/sources';
+
+export const config = {
+  api: {
+    bodyParser: { sizeLimit: '2mb' }, // ⬅ increase from Next.js default 1mb
+  },
+};
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const key = (req.headers['x-admin-key'] as string) || (req.query.key as string) || '';
@@ -9,11 +16,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'POST only' });
 
   try {
-    const items = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) || [];
-    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ ok: false, error: 'Empty body' });
-    await bulkAddSources(items as any);
-    res.status(200).json({ ok: true, added: items.length });
+    let items: any = req.body;
+
+    // Handle raw string body
+    if (typeof items === 'string') {
+      items = JSON.parse(items);
+    }
+
+    // Also support { items: [...] }
+    if (items && !Array.isArray(items) && Array.isArray(items.items)) {
+      items = items.items;
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ ok: false, error: 'Body must be a non-empty JSON array' });
+    }
+
+    // Basic schema check
+    const bad = items.find(
+      (x: any) => !x || !x.type || !x.token || !x.company_name
+    );
+    if (bad) return res.status(400).json({ ok: false, error: 'Each item needs type, token, company_name' });
+
+    // Cast types safely
+    const casted = items.map((x: any) => ({
+      type: String(x.type) as ATSType,
+      token: String(x.token),
+      company_name: String(x.company_name),
+    }));
+
+    await bulkAddSources(casted);
+    return res.status(200).json({ ok: true, added: casted.length });
   } catch (e: any) {
-    res.status(500).json({ ok: false, error: e?.message || 'server error' });
+    return res.status(500).json({ ok: false, error: e?.message || 'server error' });
   }
 }
