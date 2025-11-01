@@ -5,7 +5,7 @@ import { recordCronHeartbeat } from '../../../lib/heartbeat';
 import { roleMatchesWide } from '../../../lib/filters';
 import { listSourcesByType } from '../../../lib/sources';
 
-// Fallback boards (display name as Ashby board)
+// Fallback boards (Ashby uses the display name as board token)
 const FALLBACK = [
   { company: 'Anthropic', token: 'Anthropic' },
   { company: 'Perplexity', token: 'Perplexity' },
@@ -32,7 +32,10 @@ type AshbyResp = {
   }>;
 };
 
-const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
+function isTrue(v: any) {
+  const s = String(v ?? '').toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes';
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
@@ -41,10 +44,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
 
-  const allowAll = 'all' in (req.query || {});
   const debug = isTrue((req.query as any)?.debug);
+  const FILTERED = isTrue((req.query as any)?.filtered);
 
-  // DB-backed boards, fallback if empty
   const dbBoards = await listSourcesByType('ashby');
   const BOARDS = (dbBoards.length ? dbBoards : FALLBACK).map(b => ({ company: b.company_name, token: b.token }));
 
@@ -67,7 +69,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const location = j?.location || null;
         const jobUrl = j?.jobUrl || j?.applyUrl || '';
         if (!title || !jobUrl) continue;
-        if (!allowAll && !roleMatchesWide(title)) continue;
+        if (FILTERED && !roleMatchesWide(title)) continue;
 
         const fingerprint = createFingerprint(b.token, title, location ?? undefined, jobUrl);
 
@@ -99,7 +101,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  if (debug) console.log(`[CRON] ashby fetched=${fetched} inserted=${inserted}`);
+  if (debug) console.log(`[CRON] ashby fetched=${fetched} inserted=${inserted} filtered=${FILTERED}`);
   await recordCronHeartbeat('ashby', fetched, inserted);
-  return res.status(200).json({ fetched, inserted, boards: BOARDS.length });
+  return res.status(200).json({ fetched, inserted, boards: BOARDS.length, filtered: FILTERED });
 }
