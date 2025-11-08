@@ -1,6 +1,7 @@
 name: Run Cron Jobs
 
 on:
+  # Schedule runs every 15 minutes and allow manual triggers via the GitHub UI.
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch: {}
@@ -9,17 +10,28 @@ jobs:
   ping-crons:
     runs-on: ubuntu-latest
     env:
+      # Update BASE_URL to your deployed domain (e.g. https://career-portal-nine.vercel.app)
       BASE_URL: https://career-portal-nine.vercel.app
       CRON_SECRET: ${{ secrets.CRON_SECRET }}
     steps:
       - name: Ping Adzuna
         run: |
-          curl -sS -X GET "$BASE_URL/api/cron/adzuna" -H "x-cron-secret: $CRON_SECRET" || true
+          curl -sS -X GET "$BASE_URL/api/cron/adzuna" \
+            -H "x-cron-secret: $CRON_SECRET" || true
 
-      # Add your other cron endpoints if present (greenhouse, lever, ashby, etc.)
+      - name: Ping Remotive
+        run: |
+          curl -sS -X GET "$BASE_URL/api/cron/remotive" \
+            -H "x-cron-secret: $CRON_SECRET" || true
+
+      - name: Ping USAJobs
+        run: |
+          curl -sS -X GET "$BASE_URL/api/cron/usajobs" \
+            -H "x-cron-secret: $CRON_SECRET" || true
+
+      # Uncomment and customize the following lines to call other cron endpoints
+      # that use the same x-cron-secret header. For example:
       # - name: Ping Greenhouse
-      #   run: curl -sS -X GET "$BASE_URL/api/cron/greenhouse" -H "x-cron-secret: $CRON_SECRET" || true
-      # - name: Ping Lever
-      #   run: curl -sS -X GET "$BASE_URL/api/cron/lever" -H "x-cron-secret: $CRON_SECRET" || true
-      # - name: Ping Workday
-      #   run: curl -sS -X GET "$BASE_URL/api/cron/workday" -H "x-cron-secret: $CRON_SECRET" || true
+      #   run: |
+      #     curl -sS -X GET "$BASE_URL/api/cron/greenhouse" \
+      #       -H "x-cron-secret: $CRON_SECRET" || true
