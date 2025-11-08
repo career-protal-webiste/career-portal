@@ -5,8 +5,8 @@ import { createFingerprint } from '@/lib/fingerprint';
 import { inferExperience } from '@/lib/experience';
 import { requireCronSecret, endWithHeartbeat } from './_utils';
 
-const COUNTRY = 'us'; // Adzuna country code
-const MAX_PAGES = 10; // 10 pages * 50 = 500/day just from Adzuna
+const COUNTRY = 'us';
+const MAX_PAGES = 10;
 const RESULTS_PER_PAGE = 50;
 
 async function fetchAdzuna(page: number) {
@@ -38,8 +38,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const title = r.title || '';
         const company = r.company?.display_name || r.company || '';
         const location = r.location?.display_name || r.location || 'United States';
-        const url = r.redirect_url || r.adref || r.created || '';
-        const posted = r.created || r.created_at || r.updated;
+        const url = r.redirect_url || r.adref || '';
+        const posted =
+          r.created || r.created_at || r.updated || null;
         const exp = inferExperience(`${title} ${r.description || ''}`);
 
         const fp = createFingerprint(company, title, location, url, r.id?.toString?.());
@@ -59,7 +60,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
         inserted++;
       }
-      // small delay to be nice to API
       await new Promise((r) => setTimeout(r, 400));
     }
     return endWithHeartbeat(res, 'adzuna', fetched, inserted);
