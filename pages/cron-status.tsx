@@ -1,4 +1,6 @@
 // pages/cron-status.tsx
+'use client';
+
 import { useEffect, useState } from 'react';
 
 type Row = {
@@ -15,24 +17,22 @@ type ApiResp = {
 };
 
 const th: React.CSSProperties = { textAlign: 'left', borderBottom: '1px solid #ddd', padding: '8px' };
-const td: React.CSSProperties = { borderBottom: '1px solid #eee', padding: '8px' };
+const td: React.CSS_PROPERTIES = { borderBottom: '1px solid #eee', padding: '8px' };
 
 export default function CronStatus() {
   const [data, setData] = useState<ApiResp | null>(null);
 
   useEffect(() => {
     let mounted = true;
-
-    const load = async () => {
+    async function load() {
       try {
-        const r = await fetch('/api/cron/status');
-        const j: ApiResp = await r.json();
-        if (mounted) setData(j);
+        const res = await fetch('/api/cron/status');
+        const json: ApiResp = await res.json();
+        if (mounted) setData(json);
       } catch (e: any) {
-        if (mounted) setData({ ok: false, error: String(e?.message || e) });
+        if (mounted) setData({ ok: false, error: e?.message || String(e) });
       }
-    };
-
+    }
     load();
     const id = setInterval(load, 30_000);
     return () => {
@@ -60,7 +60,7 @@ export default function CronStatus() {
           {(data.rows || []).map((r) => (
             <tr key={r.source}>
               <td style={td}>{r.source}</td>
-              <td style={td}>{new Date(r.last_run).toLocaleString()}</td>
+              <td style={td}>{r.last_run ? new Date(r.last_run).toLocaleString() : 'n/a'}</td>
               <td style={td}>{r.fetched_24h ?? 0}</td>
               <td style={td}>{r.inserted_24h ?? 0}</td>
             </tr>
