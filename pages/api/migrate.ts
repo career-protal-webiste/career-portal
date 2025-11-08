@@ -1,6 +1,5 @@
-// pages/api/migrate.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { migrate } from '@/lib/db';
+import { migrate } from '../../lib/db'; // <— update this path
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const key = req.query.key as string | undefined;
