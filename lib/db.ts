@@ -79,10 +79,15 @@ export type UpsertJobInput = {
   experience_hint?: string | null;
   category?: string | null;
   url?: string | null;
-  posted_at?: string | null; // ISO string okay
+  posted_at?: string | null; // ISO string preferred
 };
 
 export async function upsertJob(j: UpsertJobInput) {
+  // Convert posted_at to ISO string (Primitive) for @vercel/postgres
+  const postedIso = j.posted_at ? new Date(j.posted_at).toISOString() : null;
+  const remoteText =
+    typeof j.remote === 'boolean' ? String(j.remote) : (j.remote ?? null);
+
   await sql/*sql*/`
     INSERT INTO jobs
       (fingerprint, source, source_id, company, title, location, remote, employment_type, experience_hint, category, url, posted_at, created_at, updated_at)
@@ -94,12 +99,12 @@ export async function upsertJob(j: UpsertJobInput) {
         ${j.company ?? null},
         ${j.title ?? null},
         ${j.location ?? null},
-        ${typeof j.remote === 'boolean' ? (j.remote ? 'true' : 'false') : j.remote ?? null},
+        ${remoteText},
         ${j.employment_type ?? null},
         ${j.experience_hint ?? null},
         ${j.category ?? null},
         ${j.url ?? null},
-        ${j.posted_at ? new Date(j.posted_at) : null},
+        ${postedIso},
         NOW(), NOW()
       )
     ON CONFLICT (fingerprint) DO UPDATE SET
