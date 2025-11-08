@@ -1,34 +1,25 @@
-name: Run Cron Ingestors
+name: Run Cron Jobs
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # every 15 minutes
-  workflow_dispatch:          # allow manual runs
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
 
 jobs:
-  run-crons:
+  ping-crons:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     env:
-      BASE_URL: https://<YOUR-PROD-DOMAIN>   # e.g. https://career-portal-nine.vercel.app
+      BASE_URL: https://career-portal-nine.vercel.app
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
     steps:
-      - name: ASHBY
+      - name: Ping Adzuna
         run: |
-          curl -fsSL -H "x-cron-key: ${{ secrets.CRON_SECRET }}" \
-            "$BASE_URL/api/cron/ashby?all=1&debug=1"
-      - name: WORKABLE
-        run: |
-          curl -fsSL -H "x-cron-key: ${{ secrets.CRON_SECRET }}" \
-            "$BASE_URL/api/cron/workable?all=1&debug=1"
-      - name: RECRUITEE
-        run: |
-          curl -fsSL -H "x-cron-key: ${{ secrets.CRON_SECRET }}" \
-            "$BASE_URL/api/cron/recruitee?all=1&debug=1"
-      - name: LEVER
-        run: |
-          curl -fsSL -H "x-cron-key: ${{ secrets.CRON_SECRET }}" \
-            "$BASE_URL/api/cron/lever?debug=1"
-      - name: GREENHOUSE
-        run: |
-          curl -fsSL -H "x-cron-key: ${{ secrets.CRON_SECRET }}" \
-            "$BASE_URL/api/cron/greenhouse?debug=1"
+          curl -sS -X GET "$BASE_URL/api/cron/adzuna" -H "x-cron-secret: $CRON_SECRET" || true
+
+      # Add your other cron endpoints if present (greenhouse, lever, ashby, etc.)
+      # - name: Ping Greenhouse
+      #   run: curl -sS -X GET "$BASE_URL/api/cron/greenhouse" -H "x-cron-secret: $CRON_SECRET" || true
+      # - name: Ping Lever
+      #   run: curl -sS -X GET "$BASE_URL/api/cron/lever" -H "x-cron-secret: $CRON_SECRET" || true
+      # - name: Ping Workday
+      #   run: curl -sS -X GET "$BASE_URL/api/cron/workday" -H "x-cron-secret: $CRON_SECRET" || true
