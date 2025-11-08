@@ -1,6 +1,5 @@
-// pages/api/cron/_utils.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { recordHeartbeat } from '@/lib/db';
+import { recordHeartbeat } from '../../../lib/db'; // <— update this path
 
 export function requireCronSecret(req: NextApiRequest, res: NextApiResponse): boolean {
   const header = req.headers['x-cron-secret'] as string | undefined;
@@ -22,7 +21,6 @@ export async function endWithHeartbeat(
   try {
     await recordHeartbeat(source, fetched, inserted);
   } catch (e) {
-    // best effort; don’t fail response because of heartbeat
     console.error('heartbeat error', e);
   }
   res.status(200).json({ ok: true, source, fetched, inserted });
