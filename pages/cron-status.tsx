@@ -1,10 +1,45 @@
 // pages/cron-status.tsx
-import useSWR from 'swr';
+import { useEffect, useState } from 'react';
 
-const fetcher = (u: string) => fetch(u).then((r) => r.json());
+type Row = {
+  source: string;
+  last_run: string;
+  fetched_24h: number | null;
+  inserted_24h: number | null;
+};
+
+type ApiResp = {
+  ok: boolean;
+  rows?: Row[];
+  error?: string;
+};
+
+const th: React.CSSProperties = { textAlign: 'left', borderBottom: '1px solid #ddd', padding: '8px' };
+const td: React.CSSProperties = { borderBottom: '1px solid #eee', padding: '8px' };
 
 export default function CronStatus() {
-  const { data } = useSWR('/api/cron/status', fetcher, { refreshInterval: 30_000 });
+  const [data, setData] = useState<ApiResp | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const load = async () => {
+      try {
+        const r = await fetch('/api/cron/status');
+        const j: ApiResp = await r.json();
+        if (mounted) setData(j);
+      } catch (e: any) {
+        if (mounted) setData({ ok: false, error: String(e?.message || e) });
+      }
+    };
+
+    load();
+    const id = setInterval(load, 30_000);
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, []);
 
   if (!data) return <div style={{ padding: 24 }}>Loading…</div>;
   if (!data.ok) return <div style={{ padding: 24, color: 'crimson' }}>Error: {data.error}</div>;
@@ -22,7 +57,7 @@ export default function CronStatus() {
           </tr>
         </thead>
         <tbody>
-          {(data.rows || []).map((r: any) => (
+          {(data.rows || []).map((r) => (
             <tr key={r.source}>
               <td style={td}>{r.source}</td>
               <td style={td}>{new Date(r.last_run).toLocaleString()}</td>
@@ -35,6 +70,3 @@ export default function CronStatus() {
     </div>
   );
 }
-
-const th: React.CSSProperties = { textAlign: 'left', borderBottom: '1px solid #ddd', padding: '8px' };
-const td: React.CSSProperties = { borderBottom: '1px solid #eee', padding: '8px' };
