@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { sql } from '@/lib/db';
+import { sql } from '../../../../lib/db'; // <— update this path
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -13,7 +13,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     await sql/*sql*/`
       INSERT INTO ats_sources (type, token, company_name)
       VALUES (${type}, ${token}, ${company_name})
-      ON CONFLICT (type, token) DO UPDATE SET company_name = EXCLUDED.company_name, updated_at = NOW();
+      ON CONFLICT (type, token) DO UPDATE
+        SET company_name = EXCLUDED.company_name, updated_at = NOW();
     `;
     res.status(200).json({ ok: true });
   } catch (e: any) {
