@@ -1,21 +1,27 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { upsertJob } from '../../../lib/db';                 // <— update
-import { createFingerprint } from '../../../lib/fingerprint'; // <— update
-import { inferExperience } from '../../../lib/experience';    // <— update
+import { upsertJob } from '../../../lib/db';
+import { createFingerprint } from '../../../lib/fingerprint';
+import { inferExperience } from '../../../lib/experience';
 import { requireCronSecret, endWithHeartbeat } from './_utils';
 
+// Country code for Adzuna API. Using 'us' restricts results to US postings.
 const COUNTRY = 'us';
+// Number of pages to fetch per run. Each page contains RESULTS_PER_PAGE items.
 const MAX_PAGES = 10;
 const RESULTS_PER_PAGE = 50;
 
+/**
+ * Fetch a single page of results from the Adzuna API. Throws on non‑200 responses.
+ */
 async function fetchAdzuna(page: number) {
-  const app_id = process.env.ADZUNA_APP_ID!;
-  const app_key = process.env.ADZUNA_APP_KEY!;
-  if (!app_id || !app_key) throw new Error('Missing ADZUNA creds');
+  const appId = process.env.ADZUNA_APP_ID;
+  const appKey = process.env.ADZUNA_APP_KEY;
+  if (!appId || !appKey) throw new Error('Missing ADZUNA creds');
 
+  // Target roles for interns, new grads and early career. See Adzuna docs for query syntax.
   const what = encodeURIComponent('(new grad OR "new graduate" OR intern OR junior OR "early career" OR "0-5 years")');
   const url =
-    `https://api.adzuna.com/v1/api/jobs/${COUNTRY}/search/${page}?app_id=${app_id}&app_key=${app_key}` +
+    `https://api.adzuna.com/v1/api/jobs/${COUNTRY}/search/${page}?app_id=${appId}&app_key=${appKey}` +
     `&results_per_page=${RESULTS_PER_PAGE}&what=${what}&content-type=application/json`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`Adzuna ${page} ${r.status}`);
@@ -23,6 +29,7 @@ async function fetchAdzuna(page: number) {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Authenticate using the cron secret. Abort early on failure.
   if (!requireCronSecret(req, res)) return;
   let fetched = 0;
   let inserted = 0;
@@ -33,31 +40,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const rows = data.results || [];
       fetched += rows.length;
 
-      for (const r of rows) {
-        const title = r.title || '';
-        const company = r.company?.display_name || r.company || '';
-        const location = r.location?.display_name || r.location || 'United States';
-        const url = r.redirect_url || r.adref || '';
-        const posted = r.created || r.created_at || r.updated || null;
-        const exp = inferExperience(`${title} ${r.description || ''}`);
+      for (const j of rows) {
+        const title = j.title || '';
+        const company = j.company?.display_name || j.company || '';
+        const location = j.location?.display_name || j.location || 'United States';
+        const urlJob = j.redirect_url || j.adref || '';
+        const posted = j.created || j.created_at || j.updated || null;
+        const description = j.description || '';
+        const exp = inferExperience(`${title} ${description}`);
 
-        const fp = createFingerprint(company, title, location, url, r.id?.toString?.());
+        const fp = createFingerprint(company, title, location, urlJob, j.id?.toString?.());
         await upsertJob({
           fingerprint: fp,
           source: 'adzuna',
-          source_id: r.id?.toString?.() || null,
+          source_id: j.id?.toString?.() || null,
           company,
           title,
           location,
-          remote: /remote/i.test(`${location} ${r.description || ''}`) ? 'true' : null,
-          employment_type: r.contract_type || null,
+          remote: /remote/i.test(`${location} ${description}`) ? 'true' : null,
+          employment_type: j.contract_type || null,
           experience_hint: exp,
-          category: r.category?.label || null,
-          url,
-          posted_at: posted ? new Date(posted).toISOString() : null
+          category: j.category?.label || null,
+          url: urlJob,
+          posted_at: posted ? new Date(posted).toISOString() : null,
         });
         inserted++;
       }
+      // Throttle requests to respect API limits
       await new Promise((r) => setTimeout(r, 400));
     }
     return endWithHeartbeat(res, 'adzuna', fetched, inserted);
