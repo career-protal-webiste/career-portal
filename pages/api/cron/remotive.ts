@@ -1,85 +1,59 @@
-// pages/api/cron/remotive.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { upsertJob } from '../../../lib/db';
+import { createFingerprint } from '../../../lib/fingerprint';
+import { inferExperience } from '../../../lib/experience';
+import { requireCronSecret, endWithHeartbeat } from './_utils';
 
-type RemotiveJob = {
-  id: number;
-  title: string;
-  company_name: string;
-  category: string;
-  url: string;
-  publication_date: string; // ISO
-  candidate_required_location: string; // e.g. "USA Only", "Worldwide"
-  job_type?: string; // full_time, contract, etc.
-  description?: string;
-  salary?: string;
-};
-
+/**
+ * Remotive is a free public API for remote jobs. We query it once per run
+ * without credentials and filter results to U.S. friendly postings. Only
+ * early‑career roles are ingested.
+ */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const ADMIN_KEY = process.env.ADMIN_KEY || '';
-  const providedKey = String(req.query.key ?? req.headers['x-admin-key'] ?? '');
-  if (ADMIN_KEY && providedKey !== ADMIN_KEY) {
-    return res.status(401).json({ ok: false, error: 'unauthorized' });
-  }
-
-  const url = 'https://remotive.com/api/remote-jobs?category=software-dev';
-  let fetched = 0, inserted = 0;
+  if (!requireCronSecret(req, res)) return;
+  let fetched = 0;
+  let inserted = 0;
 
   try {
-    const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
-    if (!r.ok) throw new Error(`Remotive HTTP ${r.status}`);
-    const data = await r.json();
-    const jobs: RemotiveJob[] = data?.jobs ?? [];
-    fetched = jobs.length;
+    const r = await fetch('https://remotive.com/api/remote-jobs');
+    if (!r.ok) throw new Error(`remotive ${r.status}`);
+    const data = (await r.json()) as { jobs?: any[] };
+    const rows = data.jobs || [];
+    fetched = rows.length;
 
-    for (const j of jobs) {
-      // Focus US-only (or US-friendly) roles
-      const loc = (j.candidate_required_location || '').toLowerCase();
-      const isUS =
-        /usa|us only|united states|north america/.test(loc);
-
+    for (const j of rows) {
+      const title = j.title || '';
+      const company = j.company_name || j.company || '';
+      const location = j.candidate_required_location || 'Remote';
+      // Limit to jobs that explicitly mention the US or North America
+      const locLower = location.toLowerCase();
+      const isUS = /usa|us\sonly|united states|north america/.test(locLower);
       if (!isUS) continue;
+      const url = j.url || j.job_url || '';
+      const posted = j.publication_date || j.created_at || null;
+      const description = j.description || '';
+      const exp = inferExperience(`${title} ${description}`);
 
-      const company = j.company_name?.trim() || 'Unknown';
-      const title = j.title?.trim() || 'Job';
-      const location = j.candidate_required_location || 'Remote (US)';
-      const remote = true;
-      const employment_type = j.job_type ?? null;
-      const experience_hint = /junior|entry\s*level|0-1|0-2|0-3/i.test(`${j.title} ${j.description}`) ? '0-1' : null;
-      const category = j.category || 'Software';
-      const urlJob = j.url;
-      const posted_at = j.publication_date ? new Date(j.publication_date).toISOString() : null;
-      const scraped_at = new Date().toISOString();
-      const description = j.description || null;
-
-      let salary_min: number | null = null, salary_max: number | null = null, currency: string | null = null;
-      if (j.salary) {
-        const m = j.salary.match(/(\$|usd)?\s?(\d{2,3},?\d{0,3})\D+(\d{2,3},?\d{0,3})/i);
-        if (m) {
-          currency = 'USD';
-          salary_min = Number(m[2].replace(/,/g, ''));
-          salary_max = Number(m[3].replace(/,/g, ''));
-        }
-      }
-
-      const visa_tags = null;
-      const fingerprint = `${company}|${title}|${location}|${urlJob}`.toLowerCase();
-
+      const fp = createFingerprint(company, title, location, url, j.id?.toString?.());
       await upsertJob({
-        fingerprint,
-        source: 'lever', // reuse existing enum
-        source_id: String(j.id),
-        company, title, location, remote,
-        employment_type, experience_hint, category,
-        url: urlJob, posted_at, scraped_at,
-        description, salary_min, salary_max, currency,
-        visa_tags
+        fingerprint: fp,
+        source: 'remotive',
+        source_id: j.id?.toString?.() || null,
+        company,
+        title,
+        location,
+        remote: 'true',
+        employment_type: j.job_type || null,
+        experience_hint: exp,
+        category: j.category || null,
+        url,
+        posted_at: posted ? new Date(posted).toISOString() : null,
       });
       inserted++;
     }
-
-    res.status(200).json({ ok: true, fetched, inserted });
+    return endWithHeartbeat(res, 'remotive', fetched, inserted);
   } catch (e: any) {
-    res.status(500).json({ ok: false, error: e?.message || 'remotive fetch error', fetched, inserted });
+    console.error('remotive cron failed', e);
+    return res.status(500).json({ ok: false, error: e?.message || 'remotive failed', fetched, inserted });
   }
 }
