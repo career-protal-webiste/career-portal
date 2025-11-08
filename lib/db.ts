@@ -1,19 +1,8 @@
 // lib/db.ts
-import { createPool } from '@vercel/postgres';
+import { sql as vercelSql } from '@vercel/postgres';
 
-function getConnString(): string {
-  const c =
-    process.env.DATABASE_URL ||
-    process.env.POSTGRES_URL ||
-    process.env.NEON_DATABASE_URL ||
-    process.env.POSTGRESQL_URL ||
-    '';
-  if (!c) throw new Error('No DATABASE_URL configured.');
-  return c;
-}
-
-export const pool = createPool({ connectionString: getConnString() });
-export const sql = pool.sql;
+// Re-export the tagged template so the rest of the app can `import { sql } from '@/lib/db'`
+export const sql = vercelSql;
 
 /** Run once at deploy or via /api/migrate */
 export async function migrate() {
@@ -83,7 +72,6 @@ export type UpsertJobInput = {
 };
 
 export async function upsertJob(j: UpsertJobInput) {
-  // Convert posted_at to ISO string (Primitive) for @vercel/postgres
   const postedIso = j.posted_at ? new Date(j.posted_at).toISOString() : null;
   const remoteText =
     typeof j.remote === 'boolean' ? String(j.remote) : (j.remote ?? null);
