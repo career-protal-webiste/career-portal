@@ -1,4 +1,3 @@
-// lib/heartbeat.ts
 import { sql } from './db';
 
 export type CronSource =
