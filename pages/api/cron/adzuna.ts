@@ -1,8 +1,7 @@
-// pages/api/cron/adzuna.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { upsertJob } from '@/lib/db';
-import { createFingerprint } from '@/lib/fingerprint';
-import { inferExperience } from '@/lib/experience';
+import { upsertJob } from '../../../lib/db';                 // <— update
+import { createFingerprint } from '../../../lib/fingerprint'; // <— update
+import { inferExperience } from '../../../lib/experience';    // <— update
 import { requireCronSecret, endWithHeartbeat } from './_utils';
 
 const COUNTRY = 'us';
@@ -39,8 +38,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const company = r.company?.display_name || r.company || '';
         const location = r.location?.display_name || r.location || 'United States';
         const url = r.redirect_url || r.adref || '';
-        const posted =
-          r.created || r.created_at || r.updated || null;
+        const posted = r.created || r.created_at || r.updated || null;
         const exp = inferExperience(`${title} ${r.description || ''}`);
 
         const fp = createFingerprint(company, title, location, url, r.id?.toString?.());
@@ -56,7 +54,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           experience_hint: exp,
           category: r.category?.label || null,
           url,
-          posted_at: posted ? new Date(posted).toISOString() : null,
+          posted_at: posted ? new Date(posted).toISOString() : null
         });
         inserted++;
       }
