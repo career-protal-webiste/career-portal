@@ -1,37 +1,45 @@
-// lib/db.ts
 import { sql as vercelSql } from '@vercel/postgres';
 
-// Re-export the tagged template so the rest of the app can `import { sql } from '@/lib/db'`
+// Re-export the sql tagged template from @vercel/postgres. This automatically
+// picks up your configured database URL from Vercel environment variables
+// (POSTGRES_URL, DATABASE_URL, etc.) without manually creating a pool.
 export const sql = vercelSql;
 
-/** Run once at deploy or via /api/migrate */
+/**
+ * Run database migrations to ensure necessary tables and indexes exist.
+ * Invoke this via the `/api/migrate` route after deploying, and whenever you
+ * make schema changes. The jobs table stores a de-duplicated feed of jobs,
+ * the ats_sources table stores tenant information for ATS boards, and
+ * cron_heartbeats tracks ingestion runs for monitoring.
+ */
 export async function migrate() {
-  // Core jobs table
+  // Jobs table: keyed by fingerprint to avoid duplicates. Minimal columns
+  // allow ingestion from multiple sources with varying fields.
   await sql/*sql*/`
     CREATE TABLE IF NOT EXISTS jobs (
-      fingerprint         text PRIMARY KEY,
-      source              text,
-      source_id           text,
-      company             text,
-      title               text,
-      location            text,
-      remote              text,
-      employment_type     text,
-      experience_hint     text,
-      category            text,
-      url                 text,
-      posted_at           timestamptz,
-      created_at          timestamptz DEFAULT NOW(),
-      updated_at          timestamptz DEFAULT NOW()
+      fingerprint       text PRIMARY KEY,
+      source            text,
+      source_id         text,
+      company           text,
+      title             text,
+      location          text,
+      remote            text,
+      employment_type   text,
+      experience_hint   text,
+      category          text,
+      url               text,
+      posted_at         timestamptz,
+      created_at        timestamptz DEFAULT NOW(),
+      updated_at        timestamptz DEFAULT NOW()
     );
   `;
-
-  // Helpful indexes
+  // Indexes speed up common queries (e.g. sorting by posting date or searching by company/title)
   await sql/*sql*/`CREATE INDEX IF NOT EXISTS idx_jobs_posted_at ON jobs (posted_at DESC);`;
   await sql/*sql*/`CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs ((lower(coalesce(company,''))));`;
-  await sql/*sql*/`CREATE INDEX IF NOT EXISTS idx_jobs_title   ON jobs ((lower(coalesce(title,''))));`;
+  await sql/*sql*/`CREATE INDEX IF NOT EXISTS idx_jobs_title ON jobs ((lower(coalesce(title,''))));`;
 
-  // ATS tenant sources
+  // ATS sources table: each row represents a tenant on an ATS provider. Useful for bulk
+  // ingestion of jobs from Greenhouse, Lever, Ashby, etc.
   await sql/*sql*/`
     CREATE TABLE IF NOT EXISTS ats_sources (
       id            serial PRIMARY KEY,
@@ -44,7 +52,8 @@ export async function migrate() {
     );
   `;
 
-  // Cron heartbeat metrics
+  // Cron heartbeats table: track when each ingestion job ran, and how many items
+  // were fetched and inserted. This powers the /cron-status dashboard.
   await sql/*sql*/`
     CREATE TABLE IF NOT EXISTS cron_heartbeats (
       id        serial PRIMARY KEY,
@@ -56,6 +65,8 @@ export async function migrate() {
   `;
 }
 
+// Define the shape of a job record accepted by upsertJob(). All fields are optional
+// except for the fingerprint (the unique key).
 export type UpsertJobInput = {
   fingerprint: string;
   source?: string | null;
@@ -71,6 +82,11 @@ export type UpsertJobInput = {
   posted_at?: string | null; // ISO string preferred
 };
 
+/**
+ * Insert or update a job in the database. If a row with the same fingerprint
+ * already exists, update its fields and bump updated_at. Remote values are
+ * stored as 'true' or 'false' strings for simplicity when querying.
+ */
 export async function upsertJob(j: UpsertJobInput) {
   const postedIso = j.posted_at ? new Date(j.posted_at).toISOString() : null;
   const remoteText =
@@ -111,6 +127,11 @@ export async function upsertJob(j: UpsertJobInput) {
   `;
 }
 
+/**
+ * Record a cron heartbeat. This should be called at the end of a cron handler
+ * with the total number of items fetched and inserted. The dashboard uses
+ * these rows to compute freshness and volume.
+ */
 export async function recordHeartbeat(source: string, fetched: number, inserted: number) {
   await sql/*sql*/`
     INSERT INTO cron_heartbeats (source, fetched, inserted)
