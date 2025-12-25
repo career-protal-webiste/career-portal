@@ -18,9 +18,15 @@ function truthy(v:any){ const s=String(v??'').toLowerCase(); return s==='1'||s==
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
-  const incomingKey = (req.headers['x-cron-key'] as string) || (req.query?.key as string) || '';
+  // Accept both x-cron-key and x-cron-secret headers and query params
+  const incomingKey =
+    (req.headers['x-cron-key'] as string) ||
+    (req.headers['x-cron-secret'] as string) ||
+    (req.query?.key as string) ||
+    (req.query?.secret as string) ||
+    '';
   if (!isVercelCron && process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
-    return res.status(401).json({ ok:false, error:'unauthorized' });
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
 
   const debug     = truthy((req.query as any)?.debug);
@@ -37,7 +43,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     );
   }
 
-  let fetched = 0, inserted = 0;
+  let fetched  = 0;
+  let inserted = 0;
 
   for (const t of TENANTS) {
     try {
@@ -45,17 +52,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const limit = 200;
       for (let page=0; page<20; page++) { // up to 4k postings safety cap
         const url = `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(t.token)}/postings?limit=${limit}&offset=${offset}`;
-        const r = await fetch(url, { headers: { accept:'application/json' } });
+        const r   = await fetch(url, { headers: { accept:'application/json' } });
         if (!r.ok) break;
-        const j = await r.json();
+        const j   = await r.json();
         const arr: SRPosting[] = Array.isArray(j?.content) ? j.content : (Array.isArray(j?.data) ? j.data : []);
 
         if (!arr.length) break;
 
         for (const p of arr) {
           fetched++;
+
           const title = (p.name || '').trim();
-          const locParts = [p.location?.city, p.location?.region, p.location?.country].filter(Boolean);
+          const locParts  = [p.location?.city, p.location?.region, p.location?.country].filter(Boolean);
           const location = locParts.length ? locParts.join(', ') : null;
           const url = p.applyUrl || p.ref || (p.id ? `https://jobs.smartrecruiters.com/${t.token}/${p.id}` : '');
           if (!title || !url) continue;
@@ -94,5 +102,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (debug) console.log(`[CRON] smartrecruiters fetched=${fetched} inserted=${inserted} filtered=${FILTERED}`);
   await recordCronHeartbeat('smartrecruiters', fetched, inserted);
-  res.status(200).json({ fetched, inserted, tenants: TENANTS.length, filtered: FILTERED });
+  return res.status(200).json({ fetched, inserted, tenants: TENANTS.length, filtered: FILTERED });
 }
