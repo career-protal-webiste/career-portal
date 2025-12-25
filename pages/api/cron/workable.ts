@@ -21,31 +21,40 @@ const isTrue = (v:any)=> String(v ?? '').match(/^(1|true|yes)$/i) !== null;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
-  const incomingKey = (req.headers['x-cron-key'] as string) || (req.query?.key as string) || '';
+  // Accept both x-cron-key and x-cron-secret headers and query params
+  const incomingKey =
+    (req.headers['x-cron-key'] as string) ||
+    (req.headers['x-cron-secret'] as string) ||
+    (req.query?.key as string) ||
+    (req.query?.secret as string) ||
+    '';
   if (!isVercelCron && process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
-    return res.status(401).json({ ok:false, error:'unauthorized' });
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
+
   const FILTERED = isTrue((req.query as any)?.filtered);
   const debug    = isTrue((req.query as any)?.debug);
 
   const rows = await listSourcesByType('workable');
   const SUBS = rows.map(r => ({ company: r.company_name, token: r.token }));
 
-  let fetched=0, inserted=0;
+  let fetched  = 0;
+  let inserted = 0;
 
   for (const s of SUBS) {
     try {
       // Public widget endpoint
       const url = `https://apply.workable.com/api/v1/widget/jobs?company=${encodeURIComponent(s.token)}&limit=1000`;
-      const r = await fetch(url, { headers: { accept:'application/json' } });
+      const r   = await fetch(url, { headers: { accept:'application/json' } });
       if (!r.ok) continue;
-      const j = await r.json();
+      const j   = await r.json();
       const arr: WBJob[] = Array.isArray(j?.jobs) ? j.jobs : [];
 
       for (const p of arr) {
         fetched++;
+
         const title = (p.title || '').trim();
-        const dep = p.department || null;
+        const dep   = p.department || null;
         const locParts = [p.location?.city, p.location?.region, p.location?.country].filter(Boolean);
         const location = locParts.length ? locParts.join(', ') : null;
         const url = p.url || (p.short_url ? `https://apply.workable.com${p.short_url}` : '');
