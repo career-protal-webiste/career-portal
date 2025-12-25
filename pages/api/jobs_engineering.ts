@@ -46,12 +46,20 @@ const ROLE_KEYWORDS = [
 ];
 
 const EXCLUDE_SENIOR = [
-  // We want roles up to ~5 years; exclude clearly senior/leadership titles
-  'senior','sr\\.', 'staff','principal','lead','architect','manager','director','head of','vp','chief'
+  // We want roles up to ~10 years but still avoid leadership titles.  Remove
+  // "senior" from this list to allow senior positions (typically 5–8 years) but
+  // continue excluding staff/principal/leadership roles.
+  'staff','principal','architect','lead','manager','director','head of','vp','chief'
 ];
 
-// Optionally use experience_hint if present to bias to <=5y (but don't hard require)
-const EXP_HINT_ACCEPT = ['0-1','1-2','1-3','2-4','3-5','0-5','0–1','1–3','3–5','junior','associate','mid'];
+// Optionally use experience_hint if present to bias towards early‑ to mid‑career roles.
+// Include ranges up to 10 years and include "senior". This is a soft filter – if
+// experience_hint is null we rely on title filtering above.
+const EXP_HINT_ACCEPT = [
+  '0-1','1-2','1-3','2-4','3-5','0-5','0–1','1–3','3–5',
+  '4-6','5-7','5-8','5-10','6-8','7-10','8-10','9-10',
+  'junior','associate','mid','senior'
+];
 
 function buildRegex(parts: string[]) {
   return `(${parts.join('|')})`;
