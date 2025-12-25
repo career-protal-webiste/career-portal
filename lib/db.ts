@@ -13,8 +13,10 @@ export const sql = vercelSql;
  * cron_heartbeats tracks ingestion runs for monitoring.
  */
 export async function migrate() {
-  // Jobs table: keyed by fingerprint to avoid duplicates. Minimal columns
-  // allow ingestion from multiple sources with varying fields.
+  // Jobs table: keyed by fingerprint to avoid duplicates. This definition
+  // includes fields for scraped_at, description, salary, currency and visa_tags
+  // which are used throughout the application. Older deployments that lack
+  // these columns will have them added via ALTER TABLE statements below.
   await sql/*sql*/`
     CREATE TABLE IF NOT EXISTS jobs (
       fingerprint       text PRIMARY KEY,
@@ -29,12 +31,31 @@ export async function migrate() {
       category          text,
       url               text,
       posted_at         timestamptz,
+      scraped_at        timestamptz,
+      description       text,
+      salary_min        numeric,
+      salary_max        numeric,
+      currency          text,
+      visa_tags         text,
       created_at        timestamptz DEFAULT NOW(),
       updated_at        timestamptz DEFAULT NOW()
     );
   `;
-  // Indexes speed up common queries (e.g. sorting by posting date or searching by company/title)
+
+  // Ensure missing columns are added when migrating an older schema. These
+  // operations are idempotent thanks to IF NOT EXISTS checks.
+  await sql/*sql*/`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS scraped_at  timestamptz;`;
+  await sql/*sql*/`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS description text;`;
+  await sql/*sql*/`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS salary_min numeric;`;
+  await sql/*sql*/`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS salary_max numeric;`;
+  await sql/*sql*/`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS currency   text;`;
+  await sql/*sql*/`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS visa_tags  text;`;
+
+  // Indexes speed up common queries (e.g. sorting by posting date or
+  // searching by company/title). Index on scraped_at helps ordering when
+  // posted_at is null.
   await sql/*sql*/`CREATE INDEX IF NOT EXISTS idx_jobs_posted_at ON jobs (posted_at DESC);`;
+  await sql/*sql*/`CREATE INDEX IF NOT EXISTS idx_jobs_scraped_at ON jobs (scraped_at DESC);`;
   await sql/*sql*/`CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs ((lower(coalesce(company,''))));`;
   await sql/*sql*/`CREATE INDEX IF NOT EXISTS idx_jobs_title ON jobs ((lower(coalesce(title,''))));`;
 
@@ -68,18 +89,80 @@ export async function migrate() {
 // Define the shape of a job record accepted by upsertJob(). All fields are optional
 // except for the fingerprint (the unique key).
 export type UpsertJobInput = {
+  /**
+   * Unique fingerprint for the job posting. This should be stable across
+   * scrapes so repeated runs can update an existing record rather than
+   * inserting duplicates. Typically constructed from company+title+location+url.
+   */
   fingerprint: string;
+  /**
+   * The source from which this job was ingested (greenhouse, lever, ashby, etc.).
+   */
   source?: string | null;
+  /**
+   * The provider-specific ID for the posting, if available.
+   */
   source_id?: string | null;
+  /**
+   * Company name. Nullable so fallback seeds and poorly-formatted posts can still be stored.
+   */
   company?: string | null;
+  /**
+   * Job title.
+   */
   title?: string | null;
+  /**
+   * Location (city, region, country).
+   */
   location?: string | null;
+  /**
+   * Whether the job is remote. Stored as a boolean or string to simplify SQL comparisons.
+   */
   remote?: boolean | string | null;
+  /**
+   * Employment type (full‑time, contract, internship, etc.).
+   */
   employment_type?: string | null;
+  /**
+   * Short experience hint derived from the title/description (e.g. "junior", "senior", "0-5", etc.).
+   */
   experience_hint?: string | null;
+  /**
+   * Normalized category (e.g. "data", "ml").
+   */
   category?: string | null;
+  /**
+   * Absolute URL to the job posting.
+   */
   url?: string | null;
-  posted_at?: string | null; // ISO string preferred
+  /**
+   * When the job was posted, if available. ISO date string preferred.
+   */
+  posted_at?: string | null;
+  /**
+   * When the job was scraped. Used to order jobs by recency when posted_at is missing.
+   */
+  scraped_at?: string | null;
+  /**
+   * Free‑form description or summary of the role, if provided by the source.
+   */
+  description?: string | null;
+  /**
+   * Minimum salary extracted from the posting, if any.
+   */
+  salary_min?: number | null;
+  /**
+   * Maximum salary extracted from the posting, if any.
+   */
+  salary_max?: number | null;
+  /**
+   * Currency code for salary values (e.g. "USD").
+   */
+  currency?: string | null;
+  /**
+   * Visa tags or eligibility hints (e.g. "H1B", "OPT").
+   */
+  visa_tags?: string | null;
 };
 
 /**
@@ -92,11 +175,33 @@ export async function upsertJob(j: UpsertJobInput) {
   const remoteText =
     typeof j.remote === 'boolean' ? String(j.remote) : (j.remote ?? null);
 
+  const scrapedIso = j.scraped_at ? new Date(j.scraped_at).toISOString() : null;
+
   await sql/*sql*/`
     INSERT INTO jobs
-      (fingerprint, source, source_id, company, title, location, remote, employment_type, experience_hint, category, url, posted_at, created_at, updated_at)
-    VALUES
       (
+        fingerprint,
+        source,
+        source_id,
+        company,
+        title,
+        location,
+        remote,
+        employment_type,
+        experience_hint,
+        category,
+        url,
+        posted_at,
+        scraped_at,
+        description,
+        salary_min,
+        salary_max,
+        currency,
+        visa_tags,
+        created_at,
+        updated_at
+      )
+    VALUES (
         ${j.fingerprint},
         ${j.source ?? null},
         ${j.source_id ?? null},
@@ -109,21 +214,34 @@ export async function upsertJob(j: UpsertJobInput) {
         ${j.category ?? null},
         ${j.url ?? null},
         ${postedIso},
-        NOW(), NOW()
+        ${scrapedIso},
+        ${j.description ?? null},
+        ${j.salary_min ?? null},
+        ${j.salary_max ?? null},
+        ${j.currency ?? null},
+        ${j.visa_tags ?? null},
+        NOW(),
+        NOW()
       )
     ON CONFLICT (fingerprint) DO UPDATE SET
-      source            = EXCLUDED.source,
-      source_id         = EXCLUDED.source_id,
-      company           = EXCLUDED.company,
-      title             = EXCLUDED.title,
-      location          = EXCLUDED.location,
-      remote            = EXCLUDED.remote,
-      employment_type   = EXCLUDED.employment_type,
-      experience_hint   = EXCLUDED.experience_hint,
-      category          = EXCLUDED.category,
-      url               = EXCLUDED.url,
-      posted_at         = EXCLUDED.posted_at,
-      updated_at        = NOW();
+      source          = EXCLUDED.source,
+      source_id       = EXCLUDED.source_id,
+      company         = EXCLUDED.company,
+      title           = EXCLUDED.title,
+      location        = EXCLUDED.location,
+      remote          = EXCLUDED.remote,
+      employment_type = EXCLUDED.employment_type,
+      experience_hint = EXCLUDED.experience_hint,
+      category        = EXCLUDED.category,
+      url             = EXCLUDED.url,
+      posted_at       = EXCLUDED.posted_at,
+      scraped_at      = EXCLUDED.scraped_at,
+      description     = EXCLUDED.description,
+      salary_min      = EXCLUDED.salary_min,
+      salary_max      = EXCLUDED.salary_max,
+      currency        = EXCLUDED.currency,
+      visa_tags       = EXCLUDED.visa_tags,
+      updated_at      = NOW();
   `;
 }
 
