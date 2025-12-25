@@ -39,7 +39,13 @@ function isTrue(v: any) {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
-  const incomingKey = (req.headers['x-cron-key'] as string) || (req.query?.key as string) || '';
+  // Accept both x-cron-key and x-cron-secret headers and query params
+  const incomingKey =
+    (req.headers['x-cron-key'] as string) ||
+    (req.headers['x-cron-secret'] as string) ||
+    (req.query?.key as string) ||
+    (req.query?.secret as string) ||
+    '';
   if (!isVercelCron && process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
@@ -80,12 +86,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           company: b.company,
           title,
           location,
-          remote: (location || '').toLowerCase().includes('remote') || /remote/i.test(title) || !!j?.isRemote,
+          remote: Boolean(j?.isRemote) || /remote/i.test(`${title} ${String(location)}`),
           employment_type: null,
           experience_hint: inferExperience(title, undefined),
           category: normalize(null),
           url: jobUrl,
-          posted_at: j?.publishedAt ?? null,
+          posted_at: j?.publishedAt || null,
           scraped_at: new Date().toISOString(),
           description: null,
           salary_min: null,
@@ -93,7 +99,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           currency: null,
           visa_tags: null,
         });
-
         inserted++;
       }
     } catch (err) {
