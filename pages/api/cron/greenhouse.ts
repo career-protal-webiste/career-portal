@@ -41,13 +41,19 @@ function isTrue(v: any) {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
-  const incomingKey = (req.headers['x-cron-key'] as string) || (req.query?.key as string) || '';
+  // Accept both x-cron-key and x-cron-secret headers and query params
+  const incomingKey =
+    (req.headers['x-cron-key'] as string) ||
+    (req.headers['x-cron-secret'] as string) ||
+    (req.query?.key as string) ||
+    (req.query?.secret as string) ||
+    '';
   if (!isVercelCron && process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
 
   const debug = isTrue((req.query as any)?.debug);
-  // NEW: default ingest ALL; only filter if ?filtered=1
+  // default ingest ALL; only filter if ?filtered=1
   const FILTERED = isTrue((req.query as any)?.filtered);
 
   // DB-backed sources, fallback if empty
