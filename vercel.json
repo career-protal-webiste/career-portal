@@ -1,10 +1,6 @@
-
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
-    // Poll all supported sources on a reasonable cadence. These schedules
-    // follow the defaults recommended in the README (every 15–30 minutes
-    // depending on the provider). Adjust as needed for your use case.
     { "path": "/api/cron/greenhouse",     "schedule": "*/15 * * * *" },
     { "path": "/api/cron/lever",          "schedule": "*/15 * * * *" },
     { "path": "/api/cron/ashby",          "schedule": "*/20 * * * *" },
