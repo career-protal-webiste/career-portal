@@ -23,15 +23,15 @@ function parseToken(tk: string): { host: string; tenant: string; siteHint?: stri
   try {
     if (/^https?:\/\//i.test(tk)) {
       const u = new URL(tk);
-      const host = u.host;                       // nvidia.wd5.myworkdayjobs.com
-      const seg  = u.pathname.split('/').filter(Boolean)[0] || ''; // NVIDIA
-      const tenant = (seg || host.split('.')[0]).toLowerCase();     // nvidia
-      const siteHint = seg || undefined;
+      const host    = u.host;                       // nvidia.wd5.myworkdayjobs.com
+      const seg     = u.pathname.split('/').filter(Boolean)[0] || ''; // NVIDIA
+      const tenant  = (seg || host.split('.')[0]).toLowerCase();      // nvidia
+      const siteHint= seg || undefined;
       return { host, tenant, siteHint };
     }
     const parts = tk.split(':'); // host:tenant[:site]
-    const host = parts[0];
-    const tenant = (parts[1] || host.split('.')[0]).toLowerCase();
+    const host  = parts[0];
+    const tenant= (parts[1] || host.split('.')[0]).toLowerCase();
     const siteHint = parts[2] || undefined;
     return { host, tenant, siteHint };
   } catch {
@@ -39,53 +39,33 @@ function parseToken(tk: string): { host: string; tenant: string; siteHint?: stri
   }
 }
 
-async function tryJson(url: string, init?: RequestInit): Promise<any | null> {
-  try {
-    const r = await fetch(url, init);
-    if (!r.ok) return null;
-    return await r.json();
-  } catch {
-    return null;
-  }
-}
-
 async function fetchSites(host: string, tenant: string): Promise<string[]> {
-  // workday exposes sites here (varies by tenant). Try both shapes.
-  const a = await tryJson(`https://${host}/wday/cxs/${tenant}/sites`);
-  let sites: string[] = [];
-  if (a && Array.isArray(a.sites)) {
-    sites = a.sites
-      .map((s: any) => (typeof s === 'string' ? s : s?.site || s?.name))
-      .filter(Boolean);
+  try {
+    const url = `https://${host}/wday/cxs/${tenant}/api/worker/v1/data/positions/sites`;
+    const r   = await fetch(url, { headers: { accept: 'application/json' } });
+    if (!r.ok) return [];
+    const j   = await r.json();
+    const arr: any[] = Array.isArray(j?.data) ? j.data : [];
+    const names = arr.map((s: any) => s.siteId).filter((v: any) => typeof v === 'string' && v);
+    return names;
+  } catch {
+    return [];
   }
-  if (sites.length === 0) {
-    const b = await tryJson(`https://${host}/wday/cxs/${tenant}/config/sites`);
-    if (b && Array.isArray(b.sites)) {
-      sites = b.sites
-        .map((s: any) => (typeof s === 'string' ? s : s?.site || s?.name))
-        .filter(Boolean);
-    }
-  }
-  return [...new Set(sites)];
 }
 
-function toIso(x: any): string | null {
-  if (!x) return null;
-  if (typeof x === 'number') return new Date(x).toISOString();
-  const d = new Date(x);
-  return isNaN(d.getTime()) ? null : d.toISOString();
+async function fetchJobs(host: string, tenant: string, site: string, offset: number, limit: number): Promise<any[]> {
+  const body = JSON.stringify({ appliedFacets: {}, limit, offset, searchText: '' });
+  const url  = `https://${host}/wday/cxs/${tenant}/${encodeURIComponent(site)}/jobs`;
+  const r    = await fetch(url, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, body });
+  if (!r.ok) return [];
+  const j    = await r.json();
+  return Array.isArray(j?.data) ? j.data : [];
 }
 
-function pickTitle(j: AnyObj): string {
-  return j.title?.label || j.title || j.displayJobTitle || j.workerSubType || j.positionTitle || '';
-}
-
-function pickLocation(j: AnyObj): string | null {
-  if (typeof j.locationsText === 'string' && j.locationsText.trim()) return j.locationsText.trim();
-  if (Array.isArray(j.locations)) {
-    const t = j.locations.map((x: any) => (x?.label || x)).filter(Boolean).join(', ');
-    if (t) return t;
-  }
+function getLocation(j: AnyObj): string | null {
+  // attempt to read top-level property
+  if (j.location) return String(j.location);
+  // search nested subtitles for a Location label
   if (Array.isArray(j.subtitles)) {
     const loc = j.subtitles.find((s: any) => /location/i.test(String(s?.label || '')));
     if (loc?.text) return String(loc.text);
@@ -102,7 +82,13 @@ function pickUrl(host: string, j: AnyObj): string {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
-  const incomingKey  = (req.headers['x-cron-key'] as string) || (req.query?.key as string) || '';
+  // Accept both x-cron-key and x-cron-secret headers and query params
+  const incomingKey  =
+    (req.headers['x-cron-key'] as string) ||
+    (req.headers['x-cron-secret'] as string) ||
+    (req.query?.key as string) ||
+    (req.query?.secret as string) ||
+    '';
   if (!isVercelCron && process.env.CRON_SECRET && incomingKey !== process.env.CRON_SECRET) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
@@ -130,53 +116,41 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (sites.length === 0) sites = [tenant.toUpperCase()];
 
     for (const site of sites) {
-      let offset = 0;
+      let offset  = 0;
       const limit = 50;
-      const maxPages = 60; // safety cap (3k/job postings per site)
+      const maxPages = 60; // safety cap (3k postings per site)
 
       for (let page = 0; page < maxPages; page++) {
-        const url = `https://${host}/wday/cxs/${tenant}/${encodeURIComponent(site)}/jobs`;
-        const body = JSON.stringify({ appliedFacets: {}, limit, offset, searchText: '' });
-        const resp = await fetch(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'accept': 'application/json' },
-          body
-        });
-
-        if (!resp.ok) break;
-        const json: AnyObj = await resp.json();
-
-        // Newer WD returns `jobPostings`; older sometimes uses `items`
-        const rows: AnyObj[] = Array.isArray(json?.jobPostings)
-          ? json.jobPostings
-          : (Array.isArray(json?.items) ? json.items : []);
-
-        if (!rows.length) break;
-
-        for (const j of rows) {
-          const title = String(pickTitle(j) || '').trim();
-          const loc   = pickLocation(j);
-          const url   = pickUrl(host, j);
-
-          if (!title || !url) continue;
-
+        const data = await fetchJobs(host, tenant, site, offset, limit);
+        if (!data.length) break;
+        for (const j of data) {
           fetched++;
 
-          const fingerprint = createFingerprint(s.company, title, loc ?? undefined, url);
+          const title    = j.title || '';
+          const location = getLocation(j);
+          const url      = pickUrl(host, j);
+          const posted   = j.postedDate || j.postedOn || null;
+          if (!title || !url) continue;
+
+          // Only filter by role if ?filtered=1 is passed in query
+          const filter   = isTrue((req.query as any)?.filtered);
+          if (filter && !roleMatchesWide(title)) continue;
+
+          const fingerprint = createFingerprint(host, title, location ?? undefined, url);
 
           await upsertJob({
             fingerprint,
             source: 'workday',
-            source_id: j.id ? String(j.id) : null,
+            source_id: String(j.id || j.uuid || ''),
             company: s.company,
             title,
-            location: loc,
-            remote: /remote|anywhere/i.test(`${title} ${loc || ''}`),
+            location,
+            remote: Boolean(/remote/i.test(`${title} ${String(location)}`)),
             employment_type: null,
             experience_hint: inferExperience(title, undefined),
             category: normalize(j.category || null),
             url,
-            posted_at: toIso(j.timePosted) || toIso(j.postedOn) || toIso(j.postedDate) || null,
+            posted_at: posted ? new Date(posted).toISOString() : null,
             scraped_at: new Date().toISOString(),
             description: null,
             salary_min: null,
@@ -184,20 +158,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             currency: null,
             visa_tags: null,
           });
-
           inserted++;
         }
-
-        if (rows.length < limit) break; // last page
         offset += limit;
       }
     }
   }
 
   if (debug) console.log(`[CRON] workday fetched=${fetched} inserted=${inserted}`);
-
-  // If your lib/heartbeat CronSource type doesn’t include "workday", the cast avoids a TS error.
-  await (recordCronHeartbeat as any)('workday', fetched, inserted);
-
-  res.status(200).json({ fetched, inserted, boards: SOURCES.length, filtered: false });
+  await recordCronHeartbeat('workday', fetched, inserted);
+  return res.status(200).json({ fetched, inserted, sources: SOURCES.length });
 }
