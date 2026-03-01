@@ -50,6 +50,8 @@ export async function migrate() {
   await sql/*sql*/`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS salary_max numeric;`;
   await sql/*sql*/`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS currency   text;`;
   await sql/*sql*/`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS visa_tags  text;`;
+  await sql/*sql*/`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT NOW();`;
+  await sql/*sql*/`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT NOW();`;
 
   // Indexes speed up common queries (e.g. sorting by posting date or
   // searching by company/title). Index on scraped_at helps ordering when
