@@ -8,7 +8,7 @@ export default function HomePage() {
       title="US Jobs for Indian Students — OPT / CPT / H1B"
       defaultUsOnly={true}
       defaultRolesCsv="software,data_science,data_engineer,analyst"
-      defaultMaxAge={30}
+      defaultMaxAge={365}
       showOpenAllLink={true}
     />
   );

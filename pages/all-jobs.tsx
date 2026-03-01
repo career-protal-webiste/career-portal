@@ -8,7 +8,7 @@ export default function AllJobsPage() {
       title="All Jobs — Global"
       defaultUsOnly={false}
       defaultRolesCsv=""       // show everything
-      defaultMaxAge={60}
+      defaultMaxAge={365}
       showOpenAllLink={false}
     />
   );

@@ -76,7 +76,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const pageSize = intClamp(req.query.pageSize, 25, 1, 50);
     const page = intClamp(req.query.page, 1, 1, 100000);
     const q = (req.query.q as string) || '';
-    const maxAgeDays = intClamp(req.query.maxAgeDays, 7, 1, 30); // broaden to 7 days by default
+    const maxAgeDays = intClamp(req.query.maxAgeDays, 365, 1, 365);
     const sourcesCsv = (req.query.sources as string) || '';
     const sources = sourcesCsv.split(',').map(s => s.trim()).filter(Boolean);
 
@@ -85,7 +85,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Recency: by posted_at or scraped_at
     params.push(maxAgeDays);
-    where.push(`COALESCE(posted_at, scraped_at) >= NOW() - ($${params.length}::int || ' days')::interval`);
+    where.push(`(scraped_at >= NOW() - ($${params.length}::int || ' days')::interval OR posted_at >= NOW() - ($${params.length}::int || ' days')::interval)`);
 
     // US-only (location/title mention US or a state code, or Remote+US mention)
     where.push(`(
