@@ -199,9 +199,7 @@ export async function upsertJob(j: UpsertJobInput) {
         salary_min,
         salary_max,
         currency,
-        visa_tags,
-        created_at,
-        updated_at
+        visa_tags
       )
     VALUES (
         ${j.fingerprint},
@@ -221,9 +219,7 @@ export async function upsertJob(j: UpsertJobInput) {
         ${j.salary_min ?? null},
         ${j.salary_max ?? null},
         ${j.currency ?? null},
-        ${j.visa_tags ?? null},
-        NOW(),
-        NOW()
+        ${j.visa_tags ?? null}
       )
     ON CONFLICT (fingerprint) DO UPDATE SET
       source          = EXCLUDED.source,
@@ -242,8 +238,7 @@ export async function upsertJob(j: UpsertJobInput) {
       salary_min      = EXCLUDED.salary_min,
       salary_max      = EXCLUDED.salary_max,
       currency        = EXCLUDED.currency,
-      visa_tags       = EXCLUDED.visa_tags,
-      updated_at      = NOW();
+      visa_tags       = EXCLUDED.visa_tags;
   `;
 }
 
