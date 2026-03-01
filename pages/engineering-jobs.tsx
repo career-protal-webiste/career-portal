@@ -47,7 +47,7 @@ export default function EngineeringJobsPage() {
   const [data, setData] = useState<ApiResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState<string>(String(router.query.q ?? ''));
-  const [maxAgeDays, setMaxAgeDays] = useState<number>(Number(router.query.maxAgeDays ?? 7));
+  const [maxAgeDays, setMaxAgeDays] = useState<number>(Number(router.query.maxAgeDays ?? 365));
 
   const apiUrl = useMemo(() => {
     const params = new URLSearchParams();
@@ -125,10 +125,11 @@ export default function EngineeringJobsPage() {
               onChange={(e)=>{ setMaxAgeDays(Number(e.target.value)); go(1); }}
               style={{padding:'8px', background:'#0f141b', color:'#e6edf3', border:'1px solid #2a3343', borderRadius:8}}
             >
-              <option value={3}>3</option>
               <option value={7}>7</option>
               <option value={14}>14</option>
               <option value={30}>30</option>
+              <option value={90}>90</option>
+              <option value={365}>365</option>
             </select>
           </div>
 
