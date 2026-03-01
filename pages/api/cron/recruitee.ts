@@ -93,6 +93,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   if (debug) console.log(`[CRON] recruitee fetched=${fetched} inserted=${inserted} filtered=${FILTERED}`);
-  await recordCronHeartbeat('recruitee', fetched, inserted);
+
+  try {
+    await recordCronHeartbeat('recruitee', fetched, inserted);
+  } catch (e) {
+    console.error('[CRON] recruitee heartbeat failed', e);
+  }
+
   return res.status(200).json({ fetched, inserted, subs: SUBS.length, filtered: FILTERED });
 }

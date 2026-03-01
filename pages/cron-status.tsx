@@ -17,7 +17,7 @@ type ApiResp = {
 };
 
 const th: React.CSSProperties = { textAlign: 'left', borderBottom: '1px solid #ddd', padding: '8px' };
-const td: React.CSS_PROPERTIES = { borderBottom: '1px solid #eee', padding: '8px' };
+const td: React.CSSProperties = { borderBottom: '1px solid #eee', padding: '8px' };
 
 export default function CronStatus() {
   const [data, setData] = useState<ApiResp | null>(null);

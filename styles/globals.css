@@ -1,25 +1,54 @@
-/* styles/globals.css */
-:root{
-  --bg:#0b0c10;
-  --panel:#12141a;
-  --panel-2:#15171d;
-  --border:#2b2f3a;
-  --text:#e6e6e6;
-  --muted:#cfd3da;
-  --muted-2:#99a2b2;
-  --brand:#3c6aff;
-  --brand-2:#1a2555;
-  --chip:#1c2230;
-  --good:#7ed957;
+/* styles/globals.css — Career Portal for Indian Students in the US
+   Design: deep-space dark + electric indigo — modern, dense, mobile-first.
+   Inspired by Linear/Vercel dashboard/Levels.fyi — familiar to the TG.
+*/
+:root {
+  /* Background layers */
+  --bg:          #070b14;
+  --panel:       #0d1117;
+  --panel-2:     #111827;
+  --panel-hover: #161d30;
+
+  /* Borders */
+  --border:        #1e2d42;
+  --border-bright: #2d4065;
+
+  /* Text */
+  --text:    #f0f2ff;
+  --muted:   #8b9dc3;
+  --muted-2: #5a6d8c;
+
+  /* Brand — electric indigo (professional, modern, trusted by FAANG devs) */
+  --brand:       #6366f1;
+  --brand-light: #818cf8;
+  --brand-2:     #1e1b4b;
+
+  /* Status colours */
+  --good:   #10b981;  /* emerald — remote / active */
+  --new:    #8b5cf6;  /* violet — new-grad badge */
+  --intern: #0891b2;  /* cyan   — intern badge */
+  --senior: #6b7280;  /* gray   — senior badge */
+
+  /* Legacy alias used by some components */
+  --chip: #1c2438;
 }
 
-*{box-sizing:border-box}
-html,body{padding:0;margin:0;height:100%}
-body{
-  background:var(--bg);
-  color:var(--text);
+*, *::before, *::after { box-sizing: border-box; }
+html, body { padding: 0; margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
-a{color:inherit}
-button{font:inherit}
-input,select,button{outline:none}
+a { color: inherit; }
+button { font: inherit; }
+input, select, button, textarea { outline: none; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+::selection { background: var(--brand); color: #fff; }

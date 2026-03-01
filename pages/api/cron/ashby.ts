@@ -5,20 +5,34 @@ import { recordCronHeartbeat } from '../../../lib/heartbeat';
 import { roleMatchesWide } from '../../../lib/filters';
 import { listSourcesByType } from '../../../lib/sources';
 
-// Fallback boards (Ashby uses the display name as board token)
+// Fallback boards — companies known to use Ashby (token = display name used in API)
 const FALLBACK = [
-  { company: 'Anthropic', token: 'Anthropic' },
-  { company: 'Perplexity', token: 'Perplexity' },
-  { company: 'Ramp', token: 'Ramp' },
-  { company: 'Mercury', token: 'Mercury' },
-  { company: 'Retool', token: 'Retool' },
-  { company: 'Linear', token: 'Linear' },
-  { company: 'dbt Labs', token: 'dbt Labs' },
-  { company: 'Vercel', token: 'Vercel' },
-  { company: 'Quora', token: 'Quora' },
-  { company: 'Replit', token: 'Replit' },
-  { company: 'OpenAI', token: 'OpenAI' },
-  { company: 'Glean', token: 'Glean' }
+  { company: 'Anthropic',        token: 'Anthropic'        },
+  { company: 'Perplexity',       token: 'Perplexity'       },
+  { company: 'Ramp',             token: 'Ramp'             },
+  { company: 'Mercury',          token: 'Mercury'          },
+  { company: 'Retool',           token: 'Retool'           },
+  { company: 'Linear',           token: 'Linear'           },
+  { company: 'dbt Labs',         token: 'dbt Labs'         },
+  { company: 'Vercel',           token: 'Vercel'           },
+  { company: 'Quora',            token: 'Quora'            },
+  { company: 'Replit',           token: 'Replit'           },
+  { company: 'OpenAI',           token: 'OpenAI'           },
+  { company: 'Glean',            token: 'Glean'            },
+  // Additional high-quality companies using Ashby
+  { company: 'Supabase',         token: 'Supabase'         },
+  { company: 'ElevenLabs',       token: 'ElevenLabs'       },
+  { company: 'Cursor',           token: 'Cursor'           },
+  { company: 'Together AI',      token: 'Together AI'      },
+  { company: 'Weights & Biases', token: 'Weights & Biases' },
+  { company: 'Warp',             token: 'Warp'             },
+  { company: 'Luma AI',          token: 'Luma AI'          },
+  { company: 'Harvey',           token: 'Harvey'           },
+  { company: 'Temporal',         token: 'Temporal'         },
+  { company: 'Mistral AI',       token: 'Mistral AI'       },
+  { company: 'Cohere',           token: 'Cohere'           },
+  { company: 'Modal',            token: 'Modal Labs'       },
+  { company: 'Render',           token: 'Render'           },
 ];
 
 type AshbyResp = {
@@ -107,6 +121,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   if (debug) console.log(`[CRON] ashby fetched=${fetched} inserted=${inserted} filtered=${FILTERED}`);
-  await recordCronHeartbeat('ashby', fetched, inserted);
+
+  try {
+    await recordCronHeartbeat('ashby', fetched, inserted);
+  } catch (e) {
+    console.error('[CRON] ashby heartbeat failed', e);
+  }
+
   return res.status(200).json({ fetched, inserted, boards: BOARDS.length, filtered: FILTERED });
 }

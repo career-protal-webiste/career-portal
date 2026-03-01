@@ -11,95 +11,140 @@ type FeedResp = {
 
 export default function JobFeedView(props: {
   defaultUsOnly?: boolean;
-  defaultRolesCsv?: string;   // e.g., 'popular' (your API supports mapped roles)
-  defaultMaxAge?: number;     // e.g., 60
+  defaultRolesCsv?: string;
+  defaultMaxAge?: number;
   title?: string;
   showOpenAllLink?: boolean;
 }) {
   const {
-    defaultUsOnly = true,
-    defaultRolesCsv = '',      // '' on /all-jobs to show everything
-    defaultMaxAge = 60,
-    title = 'Career Portal',
+    defaultUsOnly   = true,
+    defaultRolesCsv = '',
+    defaultMaxAge   = 60,
+    title           = 'Career Portal',
     showOpenAllLink = true,
   } = props;
 
-  const [q, setQ] = useState('');
-  const [usOnly, setUsOnly] = useState(defaultUsOnly);
-  const [roles, setRoles] = useState<string[]>(defaultRolesCsv ? defaultRolesCsv.split(',') : []);
+  const [q, setQ]               = useState('');
+  const [usOnly, setUsOnly]     = useState(defaultUsOnly);
+  const [roles, setRoles]       = useState<string[]>(defaultRolesCsv ? defaultRolesCsv.split(',') : []);
+  const [exp, setExp]           = useState('');
   const [maxAgeDays, setMaxAgeDays] = useState(defaultMaxAge);
-  const [page, setPage] = useState(1);
+  const [page, setPage]         = useState(1);
 
-  const [loading, setLoading] = useState(false);
-  const [data, setData] = useState<FeedResp | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading]   = useState(false);
+  const [data, setData]         = useState<FeedResp | null>(null);
+  const [error, setError]       = useState<string | null>(null);
 
-  const apiUrl = useMemo(()=>{
+  const apiUrl = useMemo(() => {
     const params = new URLSearchParams();
-    params.set('page', String(page));
-    params.set('pageSize', '100');
+    params.set('page',       String(page));
+    params.set('pageSize',   '100');
     params.set('maxAgeDays', String(maxAgeDays));
-    params.set('usOnly', usOnly ? '1':'0');
-    if (q.trim()) params.set('q', q.trim());
-    if (roles.length) params.set('roles', roles.join(','));
+    params.set('usOnly',     usOnly ? '1' : '0');
+    if (q.trim())      params.set('q',     q.trim());
+    if (roles.length)  params.set('roles', roles.join(','));
+    if (exp)           params.set('exp',   exp);
     return `/api/jobs_feed?${params.toString()}`;
-  }, [q, usOnly, roles, maxAgeDays, page]);
+  }, [q, usOnly, roles, exp, maxAgeDays, page]);
 
-  useEffect(()=>{
+  useEffect(() => {
     setLoading(true); setError(null);
     fetch(apiUrl)
-      .then(r=>{ if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((json:FeedResp)=> setData(json))
-      .catch(e=>setError(e?.message || 'Failed to load'))
-      .finally(()=>setLoading(false));
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((json: FeedResp) => setData(json))
+      .catch(e => setError(e?.message || 'Failed to load'))
+      .finally(() => setLoading(false));
   }, [apiUrl]);
 
   const apply = () => setPage(1);
-  const reset = () => { setQ(''); setUsOnly(defaultUsOnly); setRoles(defaultRolesCsv? defaultRolesCsv.split(','):[]); setMaxAgeDays(defaultMaxAge); setPage(1); };
+  const reset = () => {
+    setQ(''); setUsOnly(defaultUsOnly);
+    setRoles(defaultRolesCsv ? defaultRolesCsv.split(',') : []);
+    setExp(''); setMaxAgeDays(defaultMaxAge); setPage(1);
+  };
+
+  const total   = data?.total ?? 0;
+  const showing = data?.results.length ?? 0;
 
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
-        <h1 style={styles.h1}>{title}</h1>
-        {showOpenAllLink ? <a href="/all-jobs" style={styles.link}>Open full list →</a> : <span/>}
+    <div style={st.page}>
+      {/* Header */}
+      <header style={st.header}>
+        <div>
+          <h1 style={st.h1}>{title}</h1>
+          <p style={st.subtitle}>
+            Fresh jobs for Indian students in the US — updated every 15 min from 7 ATS platforms
+          </p>
+        </div>
+        {showOpenAllLink && (
+          <a href="/all-jobs" style={st.link}>All jobs →</a>
+        )}
       </header>
 
+      {/* Filters */}
       <FiltersBar
-        q={q} setQ={setQ}
-        usOnly={usOnly} setUsOnly={setUsOnly}
+        q={q}             setQ={setQ}
+        usOnly={usOnly}   setUsOnly={setUsOnly}
         maxAgeDays={maxAgeDays} setMaxAgeDays={setMaxAgeDays}
-        roles={roles} setRoles={setRoles}
-        onApply={apply} onReset={reset}
-        extraLink={<a href="/all-jobs" style={styles.link}>Full list →</a>}
+        roles={roles}     setRoles={setRoles}
+        exp={exp}         setExp={setExp}
+        onApply={apply}   onReset={reset}
+        extraLink={showOpenAllLink
+          ? <a href="/all-jobs" style={st.link}>Full list →</a>
+          : undefined}
       />
 
-      <section style={styles.meta}>
-        {loading ? 'Loading…' : error ? <span style={{color:'#ff8a8a'}}>Error: {error}</span> : (
+      {/* Meta row */}
+      <section style={st.meta}>
+        {loading ? (
+          <span style={st.loading}>Loading…</span>
+        ) : error ? (
+          <span style={{ color: '#f87171' }}>⚠ {error}</span>
+        ) : (
           <span>
-            Showing <strong>{Math.min(100, data?.results.length ?? 0)}</strong> of{' '}
-            <strong>{(data?.total ?? 0).toLocaleString()}</strong> jobs (page {data?.page ?? 1}/{data?.totalPages ?? 1})
+            Showing <strong>{showing}</strong> of{' '}
+            <strong>{total.toLocaleString()}</strong> jobs
+            {total === 0 && (
+              <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
+                — crons are warming up, check back in a few minutes
+              </span>
+            )}
           </span>
         )}
       </section>
 
-      <main style={styles.list}>
-        {(data?.results || []).map((job, i)=> <JobCard key={`${job.url}-${i}`} job={job} />)}
+      {/* Job grid */}
+      <main style={st.grid}>
+        {(data?.results || []).map((job, i) => (
+          <JobCard key={`${job.url}-${i}`} job={job} />
+        ))}
       </main>
 
-      <Pagination
-        page={data?.page ?? 1}
-        totalPages={data?.totalPages ?? 1}
-        onPage={setPage}
-      />
+      {/* Pagination */}
+      {(data?.totalPages ?? 1) > 1 && (
+        <Pagination
+          page={data?.page ?? 1}
+          totalPages={data?.totalPages ?? 1}
+          onPage={setPage}
+        />
+      )}
     </div>
   );
 }
 
-const styles:Record<string,any>={
-  page:{minHeight:'100vh', padding:'24px 16px'},
-  header:{maxWidth:1100, margin:'0 auto 12px', display:'flex', alignItems:'center', justifyContent:'space-between'},
-  h1:{fontSize:28, fontWeight:700, letterSpacing:0.2},
-  link:{color:'#9fb3ff', textDecoration:'none'},
-  meta:{maxWidth:1100, margin:'4px auto 12px', fontSize:14, opacity:0.9},
-  list:{maxWidth:1100, margin:'0 auto', display:'grid', gridTemplateColumns:'1fr', gap:10},
+const st: Record<string, React.CSSProperties> = {
+  page:     { minHeight: '100vh', padding: '28px 16px 60px' },
+  header:   { maxWidth: 1100, margin: '0 auto 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 },
+  h1:       { fontSize: 26, fontWeight: 700, letterSpacing: 0.1, margin: 0, color: '#e8ecff' },
+  subtitle: { margin: '4px 0 0', fontSize: 13, color: 'var(--muted)' },
+  link:     { color: 'var(--brand-light)', textDecoration: 'none', fontWeight: 500, fontSize: 14, whiteSpace: 'nowrap' },
+  meta:     { maxWidth: 1100, margin: '0 auto 12px', fontSize: 13.5, color: 'var(--muted)' },
+  loading:  { color: 'var(--muted-2)' },
+  grid:     {
+    maxWidth: 1100,
+    margin: '0 auto',
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+    gap: 10,
+  },
 };

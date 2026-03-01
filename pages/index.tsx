@@ -5,9 +5,9 @@ const JobFeedView = dynamic(()=>import('../components/JobFeedView'), { ssr: fals
 export default function HomePage() {
   return (
     <JobFeedView
-      title="Career Portal — Fresh Jobs (US STEM)"
+      title="US Jobs for Indian Students — OPT / CPT / H1B"
       defaultUsOnly={true}
-      defaultRolesCsv="popular"   // your API maps this to STEM-heavy roles
+      defaultRolesCsv="software,data_science,data_engineer,analyst"
       defaultMaxAge={30}
       showOpenAllLink={true}
     />

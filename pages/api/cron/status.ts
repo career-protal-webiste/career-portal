@@ -20,6 +20,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.status(200).json({ ok: true, rows });
   } catch (e: any) {
     console.error(e);
+    // If cron_heartbeats table doesn't exist yet, return empty rows instead of 500
+    if (e?.message?.includes('does not exist') || e?.code === '42P01') {
+      return res.status(200).json({ ok: true, rows: [], note: 'No heartbeat data yet — run /api/migrate first' });
+    }
     res.status(500).json({ ok: false, error: e?.message });
   }
 }
