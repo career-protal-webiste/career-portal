@@ -54,6 +54,7 @@ export default function FiltersBar(props: {
           onChange={e => setMaxAgeDays(parseInt(e.target.value, 10))}
           style={s.select}
         >
+          <option value={365}>All (1 year)</option>
           <option value={1}>Last 24 hours</option>
           <option value={3}>Last 3 days</option>
           <option value={7}>Last 7 days</option>
