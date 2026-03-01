@@ -5,24 +5,48 @@ import { recordCronHeartbeat } from '../../../lib/heartbeat';
 import { roleMatchesWide } from '../../../lib/filters';
 import { listSourcesByType } from '../../../lib/sources';
 
+// Fallback seeds — popular US tech companies known to use Lever.
+// Token = the company slug used in api.lever.co/v0/postings/{token}
+const FALLBACK: { company: string; token: string }[] = [
+  { company: 'Netflix',       token: 'netflix'      },
+  { company: 'Brex',          token: 'brex'         },
+  { company: 'Scale AI',      token: 'scaleai'      },
+  { company: 'Amplitude',     token: 'amplitude'    },
+  { company: 'Benchling',     token: 'benchling'    },
+  { company: 'Grammarly',     token: 'grammarly'    },
+  { company: 'Lattice',       token: 'lattice'      },
+  { company: 'Rippling',      token: 'rippling'     },
+  { company: 'Airtable',      token: 'airtable'     },
+  { company: 'Cohere',        token: 'cohere'       },
+  { company: 'Reddit',        token: 'reddit'       },
+  { company: 'Waymo',         token: 'waymo'        },
+  { company: 'Wealthfront',   token: 'wealthfront'  },
+  { company: 'Figma',         token: 'figma'        },
+  { company: 'Carta',         token: 'carta'        },
+  { company: 'Checkr',        token: 'checkr'       },
+  { company: 'Gusto',         token: 'gusto'        },
+  { company: 'Faire',         token: 'faire'        },
+  { company: 'Watershed',     token: 'watershed'    },
+  { company: 'Roboflow',      token: 'roboflow'     },
+];
+
 type LeverJob = {
   id?: string;
-  text?: string;                 // title
+  text?: string;
   hostedUrl?: string;
   categories?: {
     location?: string;
     team?: string;
     commitment?: string;
   };
-  createdAt?: number;            // ms
-  updatedAt?: number;            // ms
+  createdAt?: number;
+  updatedAt?: number;
 };
 
 const isTrue = (v: any) => String(v ?? '').match(/^(1|true|yes)$/i) !== null;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
-  // Accept both x-cron-key and x-cron-secret headers and query params
   const incomingKey =
     (req.headers['x-cron-key'] as string) ||
     (req.headers['x-cron-secret'] as string) ||
@@ -37,7 +61,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const debug    = isTrue((req.query as any)?.debug);
 
   const rows   = await listSourcesByType('lever');
-  const TENANTS = rows.map(r => ({ company: r.company_name, token: r.token }));
+  const TENANTS = rows.length
+    ? rows.map(r => ({ company: r.company_name, token: r.token }))
+    : FALLBACK;
+
   let fetched   = 0;
   let inserted  = 0;
 
@@ -87,6 +114,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   if (debug) console.log(`[CRON] lever fetched=${fetched} inserted=${inserted} filtered=${FILTERED}`);
-  await recordCronHeartbeat('lever', fetched, inserted);
+
+  try {
+    await recordCronHeartbeat('lever', fetched, inserted);
+  } catch (e) {
+    console.error('[CRON] lever heartbeat failed', e);
+  }
+
   return res.status(200).json({ fetched, inserted, tenants: TENANTS.length, filtered: FILTERED });
 }

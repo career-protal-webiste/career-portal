@@ -36,7 +36,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const debug    = isTrue((req.query as any)?.debug);
 
   const rows = await listSourcesByType('workable');
-  const SUBS = rows.map(r => ({ company: r.company_name, token: r.token }));
+  // Fallback seeds for Workable (token = company subdomain on workable.com)
+  const WORKABLE_FALLBACK = [
+    { company: 'Whatnot',    token: 'whatnot'    },
+    { company: 'Samsara',    token: 'samsara'    },
+    { company: 'Squarespace',token: 'squarespace'},
+    { company: 'Intercom',   token: 'intercom'   },
+  ];
+  const SUBS = rows.length
+    ? rows.map(r => ({ company: r.company_name, token: r.token }))
+    : WORKABLE_FALLBACK;
 
   let fetched  = 0;
   let inserted = 0;
@@ -91,6 +100,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   if (debug) console.log(`[CRON] workable fetched=${fetched} inserted=${inserted} filtered=${FILTERED}`);
-  await recordCronHeartbeat('workable', fetched, inserted);
+
+  try {
+    await recordCronHeartbeat('workable', fetched, inserted);
+  } catch (e) {
+    console.error('[CRON] workable heartbeat failed', e);
+  }
+
   return res.status(200).json({ fetched, inserted, subs: SUBS.length, filtered: FILTERED });
 }

@@ -5,24 +5,54 @@ import { recordCronHeartbeat } from '../../../lib/heartbeat';
 import { roleMatchesWide } from '../../../lib/filters';
 import { listSourcesByType } from '../../../lib/sources';
 
-// Fallback seeds if DB is empty
+// Fallback seeds — popular US tech companies known to use Greenhouse.
+// The token is the board slug used in boards-api.greenhouse.io/v1/boards/{token}/jobs
 const FALLBACK: { company: string; token: string }[] = [
-  { company: 'Stripe', token: 'stripe' },
-  { company: 'Databricks', token: 'databricks' },
-  { company: 'Snowflake', token: 'snowflakeinc' },
-  { company: 'Notion', token: 'notion' },
-  { company: 'Figma', token: 'figma' },
-  { company: 'OpenAI', token: 'openai' },
-  { company: 'Plaid', token: 'plaid' },
-  { company: 'Cloudflare', token: 'cloudflare' },
-  { company: 'Box', token: 'box' },
-  { company: 'Atlassian', token: 'atlassian' },
-  { company: 'Airbnb', token: 'airbnb' },
-  { company: 'Shopify', token: 'shopify' },
-  { company: 'Robinhood', token: 'robinhood' },
-  { company: 'Dropbox', token: 'dropbox' },
-  { company: 'Klaviyo', token: 'klaviyo' },
-  { company: 'Datadog', token: 'datadog' }
+  // Original seeds
+  { company: 'Stripe',       token: 'stripe'       },
+  { company: 'Databricks',   token: 'databricks'   },
+  { company: 'Snowflake',    token: 'snowflakeinc' },
+  { company: 'Notion',       token: 'notion'       },
+  { company: 'Figma',        token: 'figma'        },
+  { company: 'OpenAI',       token: 'openai'       },
+  { company: 'Plaid',        token: 'plaid'        },
+  { company: 'Cloudflare',   token: 'cloudflare'   },
+  { company: 'Box',          token: 'box'          },
+  { company: 'Atlassian',    token: 'atlassian'    },
+  { company: 'Airbnb',       token: 'airbnb'       },
+  { company: 'Shopify',      token: 'shopify'      },
+  { company: 'Robinhood',    token: 'robinhood'    },
+  { company: 'Dropbox',      token: 'dropbox'      },
+  { company: 'Klaviyo',      token: 'klaviyo'      },
+  { company: 'Datadog',      token: 'datadog'      },
+  // Additional US companies — great for OPT/H1B candidates
+  { company: 'Lyft',         token: 'lyft'         },
+  { company: 'Coinbase',     token: 'coinbase'     },
+  { company: 'Pinterest',    token: 'pinterest'    },
+  { company: 'GitHub',       token: 'github'       },
+  { company: 'Zendesk',      token: 'zendesk'      },
+  { company: 'Okta',         token: 'okta'         },
+  { company: 'MongoDB',      token: 'mongodb'      },
+  { company: 'HashiCorp',    token: 'hashicorp'    },
+  { company: 'Twilio',       token: 'twilio'       },
+  { company: 'PagerDuty',    token: 'pagerduty'    },
+  { company: 'Confluent',    token: 'confluent'    },
+  { company: 'HubSpot',      token: 'hubspot'      },
+  { company: 'Canva',        token: 'canva'        },
+  { company: 'Instacart',    token: 'instacart'    },
+  { company: 'Asana',        token: 'asana'        },
+  { company: 'GitLab',       token: 'gitlab'       },
+  { company: 'DoorDash',     token: 'doordash'     },
+  { company: 'Splunk',       token: 'splunk'       },
+  { company: 'Elastic',      token: 'elastic'      },
+  { company: 'Fastly',       token: 'fastly'       },
+  { company: 'CockroachDB',  token: 'cockroachlabs'},
+  { company: 'Pendo',        token: 'pendo'        },
+  { company: 'Qualtrics',    token: 'qualtrics'    },
+  { company: 'Palantir',     token: 'palantir'     },
+  { company: 'Anduril',      token: 'anduril'      },
+  { company: 'Scale AI',     token: 'scale-ai'     },
+  { company: 'Intercom',     token: 'intercom'     },
 ];
 
 type GHJob = {
@@ -41,7 +71,6 @@ function isTrue(v: any) {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const isVercelCron = !!req.headers['x-vercel-cron'];
-  // Accept both x-cron-key and x-cron-secret headers and query params
   const incomingKey =
     (req.headers['x-cron-key'] as string) ||
     (req.headers['x-cron-secret'] as string) ||
@@ -53,10 +82,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const debug = isTrue((req.query as any)?.debug);
-  // default ingest ALL; only filter if ?filtered=1
   const FILTERED = isTrue((req.query as any)?.filtered);
 
-  // DB-backed sources, fallback if empty
   const dbBoards = await listSourcesByType('greenhouse');
   const BOARDS = (dbBoards.length ? dbBoards : FALLBACK).map(b => ({ company: b.company_name, token: b.token }));
 
@@ -112,6 +139,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   if (debug) console.log(`[CRON] greenhouse fetched=${fetched} inserted=${inserted} filtered=${FILTERED}`);
-  await recordCronHeartbeat('greenhouse', fetched, inserted);
+
+  // Heartbeat is non-critical — don't let it crash the cron
+  try {
+    await recordCronHeartbeat('greenhouse', fetched, inserted);
+  } catch (e) {
+    console.error('[CRON] greenhouse heartbeat failed', e);
+  }
+
   return res.status(200).json({ fetched, inserted, boards: BOARDS.length, filtered: FILTERED });
 }

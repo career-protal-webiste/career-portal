@@ -9,8 +9,11 @@ type AnyObj = Record<string, any>;
 
 const FALLBACK = [
   // used only if DB has no workday sources yet
-  { company: 'NVIDIA', token: 'https://nvidia.wd5.myworkdayjobs.com/NVIDIA/' },
-  { company: 'Adobe',  token: 'https://adobe.wd5.myworkdayjobs.com/Adobe/'  },
+  { company: 'NVIDIA',     token: 'https://nvidia.wd5.myworkdayjobs.com/NVIDIA/'    },
+  { company: 'Adobe',      token: 'https://adobe.wd5.myworkdayjobs.com/External/'   },
+  { company: 'Salesforce', token: 'https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/' },
+  { company: 'ServiceNow', token: 'https://servicenow.wd5.myworkdayjobs.com/External/' },
+  { company: 'VMware',     token: 'https://vmware.wd1.myworkdayjobs.com/VMware/'    },
 ];
 
 const isTrue = (v: any) => v === '1' || v === 'true' || v === 'yes' || v === 1 || v === true;
@@ -166,6 +169,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   if (debug) console.log(`[CRON] workday fetched=${fetched} inserted=${inserted}`);
-  await recordCronHeartbeat('workday', fetched, inserted);
+
+  try {
+    await recordCronHeartbeat('workday', fetched, inserted);
+  } catch (e) {
+    console.error('[CRON] workday heartbeat failed', e);
+  }
+
   return res.status(200).json({ fetched, inserted, sources: SOURCES.length });
 }

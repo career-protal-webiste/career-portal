@@ -35,11 +35,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // DB-backed tenants (company slugs)
   const tenants = await listSourcesByType('smartrecruiters');
   const TENANTS = tenants.map(t => ({ company: t.company_name, token: t.token }));
-  // Fallback seed (optional)
+  // Fallback seeds
   if (TENANTS.length === 0) {
     TENANTS.push(
-      { company:'NVIDIA', token:'nvidia' },
-      { company:'Bosch', token:'boschgroup' }
+      { company: 'NVIDIA',     token: 'nvidia'      },
+      { company: 'Samsung R&D',token: 'samsungresearch' },
+      { company: 'Ericsson',   token: 'ericsson'    },
+      { company: 'Siemens',    token: 'siemens'     },
     );
   }
 
@@ -101,6 +103,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   if (debug) console.log(`[CRON] smartrecruiters fetched=${fetched} inserted=${inserted} filtered=${FILTERED}`);
-  await recordCronHeartbeat('smartrecruiters', fetched, inserted);
+
+  try {
+    await recordCronHeartbeat('smartrecruiters', fetched, inserted);
+  } catch (e) {
+    console.error('[CRON] smartrecruiters heartbeat failed', e);
+  }
+
   return res.status(200).json({ fetched, inserted, tenants: TENANTS.length, filtered: FILTERED });
 }
