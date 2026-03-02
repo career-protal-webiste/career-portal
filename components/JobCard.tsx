@@ -23,7 +23,9 @@ const chipBg: Record<string, string> = {
   workday:         '#0f1d32',
   remotive:        '#1a240f',
   adzuna:          '#2a1a0a',
+  muse:            '#1a1540',
 };
+
 const chipText: Record<string, string> = {
   greenhouse:      '#4ade80',
   ashby:           '#818cf8',
@@ -34,6 +36,7 @@ const chipText: Record<string, string> = {
   workday:         '#38bdf8',
   remotive:        '#86efac',
   adzuna:          '#fbbf24',
+  muse:            '#a78bfa',
 };
 
 /** Friendly relative time: "2h ago", "3d ago", "just now" */
@@ -75,7 +78,9 @@ function expBadge(hint: string | null | undefined): { label: string; bg: string;
 
 export default function JobCard({ job }: { job: Job }) {
   const remote   = /remote/i.test(`${job.title} ${job.location ?? ''}`);
-  const timeRef  = job.scraped_at || job.when_time;
+  // Prefer actual posting date (when_time = COALESCE(posted_at, scraped_at))
+  // so cards show "3d ago" based on when the job was POSTED, not when we scraped it
+  const timeRef  = job.when_time || job.scraped_at;
   const badge    = expBadge(job.experience_hint);
   const srcColor = chipText[job.source] || '#a5b4fc';
   const srcBg    = chipBg[job.source]   || '#1c2438';

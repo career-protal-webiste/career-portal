@@ -8,6 +8,9 @@
     { "path": "/api/cron/workable",        "schedule": "0 10 * * *" },
     { "path": "/api/cron/smartrecruiters", "schedule": "0 11 * * *" },
     { "path": "/api/cron/workday",         "schedule": "0 12 * * *" },
-    { "path": "/api/cron/remotive",        "schedule": "0 13 * * *" }
+    { "path": "/api/cron/remotive",        "schedule": "0 13 * * *" },
+    { "path": "/api/cron/muse",            "schedule": "0 14 * * *" },
+    { "path": "/api/cron/adzuna",          "schedule": "0 15 * * *" },
+    { "path": "/api/cron/usajobs",         "schedule": "0 16 * * *" }
   ]
 }

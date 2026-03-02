@@ -48,6 +48,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         category: j.category || null,
         url,
         posted_at: posted ? new Date(posted).toISOString() : null,
+        scraped_at: new Date().toISOString(),
       });
       inserted++;
     }

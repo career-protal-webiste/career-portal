@@ -21,7 +21,7 @@ if [ -z "$SECRET" ]; then
   exit 1
 fi
 
-CRONS=(greenhouse lever ashby recruitee workable smartrecruiters workday remotive)
+CRONS=(greenhouse lever ashby recruitee workable smartrecruiters workday remotive muse adzuna usajobs)
 PASS=0
 FAIL=0
 
