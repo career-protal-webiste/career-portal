@@ -1,5 +1,6 @@
 // components/JobFeedView.tsx
 import React, { useEffect, useMemo, useState } from 'react';
+import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/nextjs';
 import FiltersBar from './FiltersBar';
 import JobCard, { Job } from './JobCard';
 import Pagination from './Pagination';
@@ -65,6 +66,7 @@ export default function JobFeedView(props: {
 
   const total   = data?.total ?? 0;
   const showing = data?.results.length ?? 0;
+  const { isSignedIn } = useUser();
 
   return (
     <div style={st.page}>
@@ -73,12 +75,33 @@ export default function JobFeedView(props: {
         <div>
           <h1 style={st.h1}>{title}</h1>
           <p style={st.subtitle}>
-            Fresh jobs for Indian students in the US — updated every 15 min from 7 ATS platforms
+            Fresh jobs for Indian students in the US — OPT · CPT · H1B friendly
           </p>
         </div>
-        {showOpenAllLink && (
-          <a href="/all-jobs" style={st.link}>All jobs →</a>
-        )}
+
+        {/* Auth + nav */}
+        <div style={st.headerRight}>
+          {showOpenAllLink && (
+            <a href="/all-jobs" style={st.link}>All jobs →</a>
+          )}
+          {isSignedIn ? (
+            <UserButton
+              afterSignOutUrl="/"
+              appearance={{
+                variables: { colorPrimary: '#6366f1' },
+              }}
+            />
+          ) : (
+            <div style={st.authBtns}>
+              <SignInButton mode="modal">
+                <button style={st.btnGhost}>Sign in</button>
+              </SignInButton>
+              <SignUpButton mode="modal">
+                <button style={st.btnPrimary}>Sign up free</button>
+              </SignUpButton>
+            </div>
+          )}
+        </div>
       </header>
 
       {/* Filters */}
@@ -133,14 +156,26 @@ export default function JobFeedView(props: {
 }
 
 const st: Record<string, React.CSSProperties> = {
-  page:     { minHeight: '100vh', padding: '28px 16px 60px' },
-  header:   { maxWidth: 1100, margin: '0 auto 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 },
-  h1:       { fontSize: 26, fontWeight: 700, letterSpacing: 0.1, margin: 0, color: '#e8ecff' },
-  subtitle: { margin: '4px 0 0', fontSize: 13, color: 'var(--muted)' },
-  link:     { color: 'var(--brand-light)', textDecoration: 'none', fontWeight: 500, fontSize: 14, whiteSpace: 'nowrap' },
-  meta:     { maxWidth: 1100, margin: '0 auto 12px', fontSize: 13.5, color: 'var(--muted)' },
-  loading:  { color: 'var(--muted-2)' },
-  grid:     {
+  page:        { minHeight: '100vh', padding: '28px 16px 60px' },
+  header:      { maxWidth: 1100, margin: '0 auto 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
+  h1:          { fontSize: 26, fontWeight: 700, letterSpacing: 0.1, margin: 0, color: '#e8ecff' },
+  subtitle:    { margin: '4px 0 0', fontSize: 13, color: 'var(--muted)' },
+  link:        { color: 'var(--brand-light)', textDecoration: 'none', fontWeight: 500, fontSize: 14, whiteSpace: 'nowrap' },
+  meta:        { maxWidth: 1100, margin: '0 auto 12px', fontSize: 13.5, color: 'var(--muted)' },
+  loading:     { color: 'var(--muted-2)' },
+  headerRight: { display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 },
+  authBtns:    { display: 'flex', alignItems: 'center', gap: 8 },
+  btnGhost:    {
+    padding: '7px 14px', borderRadius: 8, border: '1px solid var(--border)',
+    background: 'transparent', color: '#c8d4f0', fontSize: 13.5, fontWeight: 500,
+    cursor: 'pointer', whiteSpace: 'nowrap' as const,
+  },
+  btnPrimary:  {
+    padding: '7px 14px', borderRadius: 8, border: 'none',
+    background: '#6366f1', color: '#fff', fontSize: 13.5, fontWeight: 600,
+    cursor: 'pointer', whiteSpace: 'nowrap' as const,
+  },
+  grid:        {
     maxWidth: 1100,
     margin: '0 auto',
     display: 'grid',
