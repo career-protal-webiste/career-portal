@@ -52,7 +52,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     for (const category of CATEGORIES) {
       for (let page = 0; page < MAX_PAGES; page++) {
-        const url = `${BASE}?category=${encodeURIComponent(category)}&level=&location=&page=${page}&descending=true`;
+        const url = `${BASE}?category=${encodeURIComponent(category)}&level=&location=United%20States&page=${page}&descending=true`;
         const r   = await fetch(url, {
           headers: { accept: 'application/json' },
         });
@@ -71,6 +71,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const url     = j.refs?.landing_page || '';
           const posted  = j.publication_date || null;
           if (!title || !company || !url) continue;
+          // Skip jobs with clearly non-US locations
+          const locLower = location.toLowerCase();
+          if (/\b(uk|united kingdom|canada|australia|india|germany|france|ireland|singapore|japan|europe|apac|emea)\b/.test(locLower)) continue;
 
           const fp = createFingerprint(company, title, location, url, String(j.id ?? ''));
           await upsertJob({
